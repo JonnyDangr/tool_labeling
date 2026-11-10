@@ -3,6 +3,7 @@ import io
 import re
 import json
 import zipfile
+import unicodedata
 import xml.etree.ElementTree as ET
 import urllib.request
 import urllib.error
@@ -10,7 +11,9 @@ from http.server import HTTPServer, SimpleHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs, unquote
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_ROOT = os.path.abspath(os.path.join(BASE_DIR, '..', 'Data'))
+_c1 = os.path.abspath(os.path.join(BASE_DIR, '..', 'Data'))
+_c2 = os.path.abspath(os.path.join(BASE_DIR, '..', '..', 'Data'))
+DATA_ROOT = _c1 if os.path.isdir(_c1) else (_c2 if os.path.isdir(_c2) else _c1)
 W_NS = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
 
 
@@ -79,7 +82,7 @@ def parse_paragraph_xml(p_elem):
                     parts.append('\t')
 
     raw_text = ''.join(parts)
-    cleaned_text = clean_glued_footer_text(raw_text).strip('\r')
+    cleaned_text = unicodedata.normalize('NFC', clean_glued_footer_text(raw_text).strip('\r'))
     if not cleaned_text.strip():
         return []
 
@@ -254,213 +257,6 @@ def extract_docx_structured(file_bytes):
     return full_text, raw_blocks
 
 
-def built_in_legal_model_predict(text, custom_prompt=None, labels_list=None, relations_list=None):
-    """
-    Vietnamese Legal NER & Relation Extraction Engine (Prompt-Aware).
-    """
-    annotations = []
-    relations = []
-    seen_spans = set()
-
-    # Determine if user's edited prompt restricts which labels/relations should be extracted
-    allowed_labels = None
-    allowed_relations = None
-    if custom_prompt and '{{LABELS}}' not in custom_prompt and labels_list:
-        mentioned_labels = [lbl for lbl in labels_list if lbl.lower() in custom_prompt.lower()]
-        if len(mentioned_labels) > 0:
-            allowed_labels = set(mentioned_labels)
-
-    if custom_prompt and '{{RELATIONS}}' not in custom_prompt and relations_list:
-        mentioned_rels = [rel for rel in relations_list if rel.lower() in custom_prompt.lower()]
-        if 'không trích xuất mối quan hệ' in custom_prompt.lower() or 'bỏ qua mối quan hệ' in custom_prompt.lower():
-            allowed_relations = set()
-        elif len(mentioned_rels) > 0:
-            allowed_relations = set(mentioned_rels)
-
-    def add_span(label, start, end):
-        if allowed_labels is not None and label not in allowed_labels:
-            return None
-        while start < end and text[start].isspace():
-            start += 1
-        while end > start and text[end - 1].isspace():
-            end -= 1
-        if end <= start:
-            return None
-        key = (label, start, end)
-        if key in seen_spans:
-            for a in annotations:
-                if a['label'] == label and a['start'] == start and a['end'] == end:
-                    return a['id']
-        seen_spans.add(key)
-        sp_id = f"sp_ai_{len(annotations) + 1}"
-        annotations.append({
-            "id": sp_id,
-            "label": label,
-            "start": start,
-            "end": end,
-            "text": text[start:end]
-        })
-        return sp_id
-
-    def add_rel(from_id, to_id, rel_type):
-        if not from_id or not to_id:
-            return
-        if allowed_relations is not None and rel_type not in allowed_relations:
-            return
-        relations.append({
-            "id": f"rel_ai_{len(relations) + 1}",
-            "fromId": from_id,
-            "toId": to_id,
-            "type": rel_type
-        })
-
-    # Pattern 1: Số hiệu
-    so_hieu_id = None
-    for m in re.finditer(r'(?:Luật\s+số|Bộ\s+luật\s+số|Nghị\s+quyết\s+số|Số|SỐ)\s*:\s*([^\s\n]+)', text, re.IGNORECASE):
-        so_hieu_id = add_span("Số hiệu", m.start(1), m.end(1))
-        break
-    if not so_hieu_id:
-        m0 = re.search(r'(\d+/\d{4}/[A-ZĐ0-9\-]+)', text)
-        if m0:
-            so_hieu_id = add_span("Số hiệu", m0.start(1), m0.end(1))
-
-    # Pattern 2: Cơ quan ban hành
-    m_cq = re.search(r'(?:^|\n)((?:BỘ|CHÍNH PHỦ|THỦ TƯỚNG|ỦY BAN|UỶ BAN|QUỐC HỘI|NGÂN HÀNG)[A-ZÀÁẠẢÃÂẦẤẬẨẪĂẰẮẶẲẴÈÉẸẺẼÊỀẾỆỂỄÌÍỊỈĨÒÓỌỎÕÔỒỐỘỔỖƠỜỚỢỞỠÙÚỤỦŨƯỪỨỰỬỮỲÝỴỶỸĐ\s]*?)\.?(?=\n)', text)
-    if m_cq and 'TRƯỞNG' not in m_cq.group(1):
-        add_span("Cơ quan ban hành", m_cq.start(1), m_cq.end(1))
-
-    # Pattern 3: Ngày ban hành (prefer date near Số: or in header before QUYẾT ĐỊNH)
-    search_start_for_date = 0
-    m_so_pos = re.search(r'(?:Luật\s+số|Số|SỐ)\s*:', text, re.IGNORECASE)
-    if m_so_pos:
-        search_start_for_date = m_so_pos.start()
-    date_found = False
-    for m in re.finditer(r'([Nn]gày\s+\d{1,2}\s+tháng\s+\d{1,2}\s+năm\s+\d{4})', text[search_start_for_date:]):
-        add_span("Ngày ban hành", search_start_for_date + m.start(1), search_start_for_date + m.end(1))
-        date_found = True
-        break
-    if not date_found:
-        for m in re.finditer(r'([Nn]gày\s+\d{1,2}\s+tháng\s+\d{1,2}\s+năm\s+\d{4})', text):
-            add_span("Ngày ban hành", m.start(1), m.end(1))
-            break
-
-    # Pattern 4: Loại văn bản & Tên văn bản
-    m_loai = re.search(r'\n(QUYẾT ĐỊNH|QUYẾT ĐỊNH|NGHỊ ĐỊNH|THÔNG TƯ|CHỈ THỊ|NGHỊ QUYẾT|BỘ LUẬT|LUẬT|PHÁP LỆNH)\s*\n', text)
-    if m_loai:
-        add_span("Loại văn bản", m_loai.start(1), m_loai.end(1))
-        after_loai = text[m_loai.end():]
-        m_title = re.match(r'((?:[^\n]+\n)+?)(?=[_—\-]{4,}|BỘ TRƯỞNG|THỦ TƯỚNG|Căn cứ)', after_loai)
-        if m_title:
-            t_start = m_loai.end() + m_title.start(1)
-            t_end = m_loai.end() + m_title.end(1)
-            add_span("Tên văn bản", t_start, t_end)
-
-    # Pattern 5: Căn cứ ban hành
-    for m in re.finditer(r'Căn cứ\s+([^\n;]+)', text):
-        cc_id = add_span("Căn cứ ban hành", m.start(1), m.end(1))
-        if cc_id and so_hieu_id:
-            add_rel(so_hieu_id, cc_id, "Căn cứ ban hành")
-
-    # Pattern 6: Cấu trúc mục lục (Phần, Chương, Mục, Tiểu Mục, Điều, Khoản, Điểm)
-    for m in re.finditer(r'(?:^|\n)(Phần\s+(?:thứ\s+)?[IVXLCDM\d]+[^\n]*)', text, re.IGNORECASE):
-        add_span("Phần", m.start(1), m.end(1))
-    for m in re.finditer(r'(?:^|\n)(Chương\s+[IVXLCDM\d]+[^\n]*)', text):
-        add_span("Chương", m.start(1), m.end(1))
-    for m in re.finditer(r'(?:^|\n)(Mục\s+\d+[^\n]*)', text):
-        add_span("Mục", m.start(1), m.end(1))
-    for m in re.finditer(r'(?:^|\n)(Tiểu mục\s+\d+[^\n]*)', text, re.IGNORECASE):
-        add_span("Tiểu Mục", m.start(1), m.end(1))
-    for m in re.finditer(r'(?:^|\n)(Điều\s+\d+[\.\-:][^\n]+)', text):
-        add_span("Điều", m.start(1), m.end(1))
-    for m in re.finditer(r'(?:^|\n)(\d+\.\s+[^\n]+)', text):
-        add_span("Khoản", m.start(1), m.end(1))
-    for m in re.finditer(r'(?:^|\n)([a-eđgh]\)\s+[^\n]+)', text):
-        add_span("Điểm", m.start(1), m.end(1))
-
-    # Pattern 7: Ngày có hiệu lực
-    m_hl = re.search(r'có hiệu lực\s+(?:thi hành\s+)?((?:kể\s+)?từ\s+ngày\s+\d{1,2}\s+tháng\s+\d{1,2}\s+năm\s+\d{4}|sau\s+\d+\s+ngày[^\.\n]*)', text, re.IGNORECASE)
-    if m_hl:
-        add_span("Ngày có hiệu lực", m_hl.start(1), m_hl.end(1))
-
-    # Pattern 8: Chức danh & Người ký
-    tail_start = max(0, len(text) - 550)
-    tail_text = text[tail_start:]
-    m_cd = re.search(r'(THỨ TRƯỞNG|BỘ TRƯỞNG|CHỦ TỊCH|THỦ TƯỚNG)', tail_text)
-    if m_cd:
-        add_span("Chức danh", tail_start + m_cd.start(1), tail_start + m_cd.end(1))
-    m_nk = re.search(r'\(Đã ký\)\s*\n\s*([^\n]+)', tail_text)
-    if m_nk:
-        add_span("Người ký", tail_start + m_nk.start(1), tail_start + m_nk.end(1))
-
-    return annotations, relations
-
-
-def resolve_gemini_api_model(model_name):
-    m = (model_name or '').lower()
-    if 'flash-lite' in m:
-        return 'gemini-2.5-flash-lite'
-    if 'pro' in m:
-        return 'gemini-2.5-pro'
-    return 'gemini-2.5-flash'
-
-
-def call_llm_auto_label(text, labels_list, relations_list, provider, api_key, endpoint_url, model_name, rendered_prompt=None):
-    if rendered_prompt and rendered_prompt.strip():
-        prompt = rendered_prompt
-    else:
-        prompt = f"""Bạn là hệ thống AI gán nhãn văn bản pháp luật Việt Nam.
-Hãy trích xuất các Thực thể (Entities) và Mối quan hệ (Relations) từ văn bản sau.
-Danh sách nhãn hợp lệ: {json.dumps(labels_list, ensure_ascii=False)}
-Danh sách quan hệ hợp lệ: {json.dumps(relations_list, ensure_ascii=False)}
-
-Trả về đúng định dạng JSON:
-{{
-  "entities": [{{"label": "Tên nhãn", "text": "chuỗi trích xuất chính xác từ văn bản"}}],
-  "relations": [{{"from_text": "chuỗi nguồn", "to_text": "chuỗi đích", "type": "Tên quan hệ"}}]
-}}
-
-Văn bản:
-{text[:8000]}
-"""
-    if provider == 'antigravity_gemini' and api_key:
-        api_model = resolve_gemini_api_model(model_name)
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{api_model}:generateContent?key={api_key}"
-        payload = {
-            "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {"responseMimeType": "application/json"}
-        }
-        req = urllib.request.Request(
-            url,
-            data=json.dumps(payload).encode('utf-8'),
-            headers={'Content-Type': 'application/json'}
-        )
-        with urllib.request.urlopen(req, timeout=35) as resp:
-            res_data = json.loads(resp.read().decode('utf-8'))
-            raw_json = res_data['candidates'][0]['content']['parts'][0]['text']
-            return json.loads(raw_json)
-
-    elif provider in ('vscode_openai', 'local_llm', 'antigravity_claude_openai') and endpoint_url:
-        headers = {'Content-Type': 'application/json'}
-        if api_key:
-            headers['Authorization'] = f'Bearer {api_key}'
-        payload = {
-            "model": model_name or "gpt-4o-mini",
-            "messages": [{"role": "user", "content": prompt}],
-            "response_format": {"type": "json_object"}
-        }
-        req = urllib.request.Request(
-            endpoint_url,
-            data=json.dumps(payload).encode('utf-8'),
-            headers=headers
-        )
-        with urllib.request.urlopen(req, timeout=35) as resp:
-            res_data = json.loads(resp.read().decode('utf-8'))
-            raw_json = res_data['choices'][0]['message']['content']
-            return json.loads(raw_json)
-
-    return None
-
-
 class LabelingRequestHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=BASE_DIR, **kwargs)
@@ -492,12 +288,14 @@ class LabelingRequestHandler(SimpleHTTPRequestHandler):
             samples = []
             total_found = 0
 
-            # Resolve target directories to scan
+            # Resolve target directories to scan securely under DATA_ROOT
             scan_dirs = []
             if custom_dir:
                 cand = custom_dir if os.path.isabs(custom_dir) else os.path.join(DATA_ROOT, custom_dir)
-                if os.path.isdir(cand):
-                    scan_dirs.append((os.path.basename(cand.rstrip('\\/')), cand))
+                norm_cand = os.path.normpath(cand)
+                if norm_cand == DATA_ROOT or norm_cand.startswith(DATA_ROOT + os.sep):
+                    if os.path.isdir(norm_cand):
+                        scan_dirs.append((os.path.basename(norm_cand.rstrip('\\/')), norm_cand))
             else:
                 if os.path.isdir(DATA_ROOT):
                     for dname in sorted(os.listdir(DATA_ROOT)):
@@ -565,8 +363,19 @@ class LabelingRequestHandler(SimpleHTTPRequestHandler):
                 self.send_json({'error': 'Thiếu tham số folder'}, status=400)
                 return
 
-            # Resolve folder or file path
-            target_path = folder if os.path.isabs(folder) else os.path.join(DATA_ROOT, folder.replace('/', os.sep))
+            # Resolve folder or file path securely under DATA_ROOT
+            if os.path.isabs(folder):
+                norm_cand = os.path.normpath(folder)
+                if not (norm_cand == DATA_ROOT or norm_cand.startswith(DATA_ROOT + os.sep)):
+                    self.send_json({'error': 'Đường dẫn không hợp lệ hoặc nằm ngoài thư mục Data'}, status=403)
+                    return
+                target_path = norm_cand
+            else:
+                target_path = os.path.normpath(os.path.join(DATA_ROOT, folder.replace('/', os.sep)))
+                if not (target_path == DATA_ROOT or target_path.startswith(DATA_ROOT + os.sep)):
+                    self.send_json({'error': 'Đường dẫn không hợp lệ hoặc nằm ngoài thư mục Data'}, status=403)
+                    return
+
             if not os.path.exists(target_path):
                 # Fallback: search inside subdirectories of DATA_ROOT
                 base_f = os.path.basename(folder)
@@ -611,8 +420,8 @@ class LabelingRequestHandler(SimpleHTTPRequestHandler):
                     if jf.lower().endswith('.json'):
                         jpath = os.path.join(folder_dir, jf)
                         try:
-                            with open(jpath, 'r', encoding='utf-8') as jfile:
-                                key = os.path.splitext(jf)[0].lower()
+                            with open(jpath, 'r', encoding='utf-8-sig') as jfile:
+                                key = os.path.splitext(jf)[0].lower().strip()
                                 companion_json[key] = json.load(jfile)
                         except Exception:
                             pass
@@ -641,92 +450,6 @@ class LabelingRequestHandler(SimpleHTTPRequestHandler):
                     'file_name': filename,
                     'text': full_text,
                     'blocks': blocks
-                })
-            except Exception as e:
-                self.send_json({'error': str(e)}, status=400)
-            return
-
-        if parsed.path == '/api/auto-label':
-            length = int(self.headers.get('Content-Length', 0))
-            body = json.loads(self.rfile.read(length).decode('utf-8'))
-            text = body.get('text', '')
-            provider = body.get('provider', 'antigravity_gemini')
-            api_key = body.get('api_key', '').strip()
-            endpoint_url = body.get('endpoint_url', '').strip()
-            model_name = body.get('model_name', '').strip()
-            labels_list = body.get('labels', [])
-            relations_list = body.get('relations', [])
-            custom_prompt = body.get('custom_prompt', '')
-            rendered_prompt = body.get('rendered_prompt', '')
-
-            try:
-                llm_res = None
-                if provider in ('antigravity_gemini', 'vscode_openai', 'local_llm', 'antigravity_claude_openai') and (api_key or endpoint_url):
-                    try:
-                        llm_res = call_llm_auto_label(
-                            text, labels_list, relations_list, provider, api_key, endpoint_url, model_name, rendered_prompt
-                        )
-                    except Exception:
-                        llm_res = None
-
-                raw_ents = None
-                raw_rels = None
-                if isinstance(llm_res, dict):
-                    raw_ents = llm_res.get('Entities') or llm_res.get('entities')
-                    raw_rels = llm_res.get('Relation') or llm_res.get('relations') or []
-
-                if isinstance(raw_ents, list) and len(raw_ents) > 0:
-                    annotations = []
-                    relations = []
-                    text_to_id = {}
-                    eid_to_id = {}
-                    for idx, ent in enumerate(raw_ents):
-                        sub = (ent.get('noi_dung') or ent.get('text') or '').strip()
-                        lbl = (ent.get('nhan') or ent.get('label') or '').strip()
-                        eid = (ent.get('id') or f'E{idx + 1}').strip()
-                        if not sub or not lbl:
-                            continue
-                        pos = text.find(sub)
-                        if pos != -1:
-                            sp_id = f"sp_llm_{idx + 1}"
-                            annotations.append({
-                                "id": sp_id,
-                                "label": lbl,
-                                "start": pos,
-                                "end": pos + len(sub),
-                                "text": sub
-                            })
-                            text_to_id[sub] = sp_id
-                            eid_to_id[eid] = sp_id
-
-                    for r_idx, rel in enumerate(raw_rels):
-                        r_type = (rel.get('moi_quan_he') or rel.get('type') or '').strip()
-                        from_id = eid_to_id.get((rel.get('tu_id') or '').strip()) or text_to_id.get((rel.get('from_text') or '').strip())
-                        to_id = eid_to_id.get((rel.get('den_id') or '').strip()) or text_to_id.get((rel.get('to_text') or '').strip())
-                        if from_id and to_id and r_type:
-                            relations.append({
-                                "id": f"rel_llm_{r_idx + 1}",
-                                "fromId": from_id,
-                                "toId": to_id,
-                                "type": r_type
-                            })
-                    self.send_json({
-                        'annotations': annotations,
-                        'relations': relations,
-                        'engine': f'{model_name or provider}'
-                    })
-                    return
-
-                annotations, relations = built_in_legal_model_predict(
-                    text,
-                    custom_prompt=custom_prompt,
-                    labels_list=labels_list,
-                    relations_list=relations_list
-                )
-                self.send_json({
-                    'annotations': annotations,
-                    'relations': relations,
-                    'engine': model_name or 'Antigravity Legal AI Engine'
                 })
             except Exception as e:
                 self.send_json({'error': str(e)}, status=400)
