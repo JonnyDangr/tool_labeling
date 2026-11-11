@@ -392,6 +392,92 @@
       gap: 10px;
       flex-wrap: wrap;
     }
+    .export-diff-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+      padding: 2px 0;
+    }
+    .export-diff-panel {
+      display: none;
+      border: 1px solid #cbd5e1;
+      border-radius: 10px;
+      background: #ffffff;
+      max-height: 290px;
+      overflow-y: auto;
+      padding: 10px 12px;
+      gap: 12px;
+      flex-direction: column;
+    }
+    .export-diff-panel.open {
+      display: flex;
+    }
+    .export-diff-section-title {
+      font-size: 12px;
+      font-weight: 800;
+      color: #0f172a;
+      margin-bottom: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+    }
+    .export-diff-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+    .export-diff-table th {
+      text-align: left;
+      background: #f1f5f9;
+      color: #475569;
+      font-weight: 700;
+      padding: 5px 8px;
+      border-bottom: 1px solid #cbd5e1;
+    }
+    .export-diff-table td {
+      padding: 5px 8px;
+      border-bottom: 1px solid #f1f5f9;
+      vertical-align: top;
+    }
+    .export-diff-tag {
+      display: inline-block;
+      padding: 1px 6px;
+      border-radius: 5px;
+      font-size: 11px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .export-diff-tag.missing {
+      background: #fee2e2;
+      color: #b91c1c;
+    }
+    .export-diff-tag.extra {
+      background: #fef3c7;
+      color: #92400e;
+    }
+    .export-diff-tag.ok {
+      background: #dcfce7;
+      color: #166534;
+    }
+    .export-missing-list {
+      margin-top: 6px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .export-missing-item {
+      background: #fff1f2;
+      border: 1px solid #fecdd3;
+      border-radius: 6px;
+      padding: 5px 8px;
+      font-size: 11.5px;
+      color: #881337;
+      line-height: 1.4;
+      word-break: break-word;
+    }
 
     /* CENTER COLUMN: DOCUMENT VIEW */
     .doc-column {
@@ -1998,15 +2084,20 @@
 
   <!-- MODAL 8: EXPORT JSON COMPARISON & DIRECTORY CONFIRMATION -->
   <div class="modal-backdrop" id="exportJsonConfirmModal" onclick="if(event.target===this) closeModal('exportJsonConfirmModal')">
-    <div class="modal" style="max-width:600px;">
+    <div class="modal" style="max-width:680px;">
       <div class="modal-header">
         <span>Kiểm Tra &amp; Xác Nhận Xuất File JSON</span>
         <button class="modal-close-x" onclick="closeModal('exportJsonConfirmModal')">✕</button>
       </div>
-      <div class="modal-body" style="gap:12px;">
+      <div class="modal-body" style="gap:10px;">
         <div id="exportJsonFileInfo" style="font-size:13px;color:#334155;"></div>
         <div id="exportEntityCompareBox"></div>
         <div id="exportRelationCompareBox"></div>
+        <div class="export-diff-bar">
+          <span id="exportDiffSummaryInline" style="font-size:12px;color:#475569;font-weight:600;"></span>
+          <button type="button" class="btn btn-outline btn-sm" id="btnToggleExportDiff" onclick="toggleExportDiffDetails()">Xem chênh lệch</button>
+        </div>
+        <div id="exportDiffDetailsPanel" class="export-diff-panel"></div>
         <div id="exportDirStatusBox" class="export-dir-box"></div>
       </div>
       <div class="modal-footer" style="justify-content:space-between;">
@@ -2243,6 +2334,7 @@
       activeFolderSource: 'server_all',
       customServerDir: '',
       jsonCandidates: [],
+      jsonCandidatesDocId: null,
       activeJsonSectionTab: 'all',
       showOnDocRelations: false,
       highlightedRelId: null,
@@ -2299,6 +2391,79 @@
       if (!idStr.startsWith(prefix)) return 0;
       const num = Number(idStr.slice(prefix.length));
       return Number.isInteger(num) && num > 0 ? num : 0;
+    }
+
+    function parseStructuredIdParts(idStr) {
+      const raw = String(idStr || '').trim();
+      const m = /^([A-Za-z]+)(\d+)(?:_(\d+))?$/.exec(raw);
+      if (!m) {
+        return { prefix: raw, baseNum: Number.MAX_SAFE_INTEGER, seqNum: Number.MAX_SAFE_INTEGER, raw };
+      }
+      return {
+        prefix: m[1],
+        baseNum: parseInt(m[2], 10),
+        seqNum: m[3] ? parseInt(m[3], 10) : 0,
+        raw
+      };
+    }
+
+    function compareStructuredIds(aId, bId) {
+      const pa = parseStructuredIdParts(aId);
+      const pb = parseStructuredIdParts(bId);
+      if (pa.prefix !== pb.prefix) return pa.prefix.localeCompare(pb.prefix);
+      if (pa.baseNum !== pb.baseNum) return pa.baseNum - pb.baseNum;
+      if (pa.seqNum !== pb.seqNum) return pa.seqNum - pb.seqNum;
+      return pa.raw.localeCompare(pb.raw);
+    }
+
+    /**
+     * Re-sequence entity & relation IDs ascending without gaps (_1, _2, ...) ONLY after entity deletion.
+     */
+    function compactDocIdsAfterEntityDelete(doc) {
+      if (!doc) return;
+      ensureDocIdsInitialized(doc);
+
+      const entityGroups = new Map();
+      (doc.annotations || []).forEach(a => {
+        const baseId = getEntityBaseId(a.label);
+        if (!entityGroups.has(baseId)) entityGroups.set(baseId, []);
+        entityGroups.get(baseId).push(a);
+      });
+
+      const nextEntityCounters = {};
+      entityGroups.forEach((items, baseId) => {
+        items.sort((a, b) => {
+          const sa = parseSuffixedIdSeq(a.entityId, baseId) || Number.MAX_SAFE_INTEGER;
+          const sb = parseSuffixedIdSeq(b.entityId, baseId) || Number.MAX_SAFE_INTEGER;
+          return sa - sb || a.start - b.start || a.end - b.end;
+        });
+        items.forEach((a, idx) => {
+          a.entityId = `${baseId}_${idx + 1}`;
+        });
+        nextEntityCounters[baseId] = items.length;
+      });
+      doc._entityCounters = nextEntityCounters;
+
+      const relGroups = new Map();
+      (doc.relations || []).forEach(r => {
+        const baseId = getRelationBaseId(r.type);
+        if (!relGroups.has(baseId)) relGroups.set(baseId, []);
+        relGroups.get(baseId).push(r);
+      });
+
+      const nextRelCounters = {};
+      relGroups.forEach((items, baseId) => {
+        items.sort((a, b) => {
+          const sa = parseSuffixedIdSeq(a.relId, baseId) || Number.MAX_SAFE_INTEGER;
+          const sb = parseSuffixedIdSeq(b.relId, baseId) || Number.MAX_SAFE_INTEGER;
+          return sa - sb;
+        });
+        items.forEach((r, idx) => {
+          r.relId = `${baseId}_${idx + 1}`;
+        });
+        nextRelCounters[baseId] = items.length;
+      });
+      doc._relCounters = nextRelCounters;
     }
 
     function allocateNextEntityId(doc, labelName) {
@@ -4500,6 +4665,7 @@
       doc.text = doc.text.slice(0, delStart) + doc.text.slice(delEnd);
 
       // 2. Update annotations (remove annotations inside deleted range, shift annotations after it)
+      const prevAnnCount = doc.annotations.length;
       const updatedAnns = [];
       doc.annotations.forEach(a => {
         if (a.end <= delStart) {
@@ -4528,6 +4694,9 @@
       // 3. Remove any relations whose endpoints were deleted
       const validIds = new Set(doc.annotations.map(a => a.id));
       doc.relations = doc.relations.filter(r => validIds.has(r.fromId) && validIds.has(r.toId));
+      if (doc.annotations.length < prevAnnCount) {
+        compactDocIdsAfterEntityDelete(doc);
+      }
 
       // 4. If the JSON section now has nothing left after JSON_SECTION_HEADER, remove the header too
       const newHeaderIdx = doc.text.indexOf(JSON_SECTION_HEADER);
@@ -4679,8 +4848,12 @@
     function deleteAnnotation(spanId) {
       if (!spanId) return;
       const doc = getCurrentDoc();
+      const prevCount = doc.annotations.length;
       doc.annotations = doc.annotations.filter(a => a.id !== spanId);
       doc.relations = doc.relations.filter(r => r.fromId !== spanId && r.toId !== spanId);
+      if (doc.annotations.length < prevCount) {
+        compactDocIdsAfterEntityDelete(doc);
+      }
       if (state.selectedSpanId === spanId) {
         state.selectedSpanId = null;
         state.popoverManualPos = null;
@@ -5075,7 +5248,7 @@
         code: toUpperSnakeCode(a.label),
         label: a.label,
         scope: getEntityScope(a.label)
-      }));
+      })).sort((a, b) => compareStructuredIds(a.id, b.id));
 
       const relations = (doc.relations || [])
         .filter(r => idMap[r.fromId] && idMap[r.toId])
@@ -5085,7 +5258,8 @@
           to_id: idMap[r.toId],
           code: toUpperSnakeCode(r.type),
           label: r.type
-        }));
+        }))
+        .sort((a, b) => compareStructuredIds(a.id, b.id));
 
       return {
         schema_version: "1.0",
@@ -5247,39 +5421,121 @@
       }
     }
 
+    function isNonNullJsonValue(val) {
+      if (val === null || val === undefined) return false;
+      const s = String(val).trim();
+      if (!s) return false;
+      const lower = s.toLowerCase();
+      return lower !== '--' && lower !== 'null' && lower !== 'none' && lower !== 'n/a' && lower !== 'undefined';
+    }
+
+    function normalizeForDiffMatch(str) {
+      let s = normalizeTocValue(str)
+        .toLowerCase()
+        .replace(/^\[[^\]]+\]:\s*/, '')
+        .replace(/[\r\n\t]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      // Treat punctuation after TOC headings consistently (e.g. "Chương I. Tên" == "Chương I\nTên")
+      s = s.replace(/^((?:phần\s+(?:thứ\s+[a-zà-ỹ]+|[\divxlcdm]+)|chương\s+[\divxlcdm]+|mục\s+[\divxlcdm]+|tiểu\s+mục\s+[\divxlcdm]+|điều\s+\d+[a-z]?|khoản\s+\d+|điểm\s+[a-zđ]))[\.\:\-\)]*\s*/i, '$1 ');
+      return s.trim();
+    }
+
+    function extractDateTokensForDiff(str) {
+      const s = String(str || '').normalize('NFC').toLowerCase();
+      let m = /(\d{4})-(\d{1,2})-(\d{1,2})/.exec(s);
+      if (m) return `${Number(m[3])}-${Number(m[2])}-${m[1]}`;
+      m = /(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/.exec(s);
+      if (m) return `${Number(m[1])}-${Number(m[2])}-${m[3]}`;
+      m = /ngày\s+(\d{1,2})\s+tháng\s+(\d{1,2})\s+năm\s+(\d{4})/i.exec(s);
+      if (m) return `${Number(m[1])}-${Number(m[2])}-${m[3]}`;
+      return '';
+    }
+
+    function isDiffItemMatched(jsonItemVal, annText) {
+      const a = normalizeForDiffMatch(jsonItemVal);
+      const b = normalizeForDiffMatch(annText);
+      if (!a || !b) return false;
+      if (a === b) return true;
+      const dateA = extractDateTokensForDiff(a);
+      const dateB = extractDateTokensForDiff(b);
+      if (dateA && dateB && dateA === dateB) return true;
+      if (a.length >= 4 && b.includes(a)) return true;
+      if (b.length >= 4 && a.includes(b)) return true;
+      const headA = a.split(/[\.\:\-\n]/)[0].trim();
+      const headB = b.split(/[\.\:\-\n]/)[0].trim();
+      if (headA.length >= 4 && headA === headB) return true;
+      return false;
+    }
+
     function computeExportComparisonStats(doc) {
-      const anns = Array.isArray(doc?.annotations) ? doc.annotations : [];
-      const rels = Array.isArray(doc?.relations) ? doc.relations : [];
+      const rawAnns = Array.isArray(doc?.annotations) ? doc.annotations : [];
+      const nonNullAnns = rawAnns.filter(a => a && isNonNullJsonValue(a.label) && isNonNullJsonValue(a.text));
+      const rawRels = Array.isArray(doc?.relations) ? doc.relations : [];
       const comp = doc?.companionJson || {};
 
-      // 1. Count non-null labels inside companion JSON files
+      const jsonItems = [];
+      const addJsonItem = (sourceTag, labelName, valueText, expectedRelType = '') => {
+        if (!isNonNullJsonValue(labelName) || !isNonNullJsonValue(valueText)) return;
+        const cleanLabel = String(labelName).trim();
+        jsonItems.push({
+          sourceTag,
+          label: cleanLabel,
+          baseId: getEntityBaseId(cleanLabel),
+          value: String(valueText).trim(),
+          expectedRelType
+        });
+      };
+
+      // 1. Collect non-null labels from thuoc_tinh.json
       let thuocTinhCount = 0;
       const hasThuocTinh = Boolean(comp.thuoc_tinh);
       if (comp.thuoc_tinh) {
-        const metaTitle = String(comp.thuoc_tinh.metadata?.title || '').trim();
-        if (metaTitle && metaTitle !== '--') thuocTinhCount++;
+        const metaTitle = comp.thuoc_tinh.metadata?.title;
+        if (isNonNullJsonValue(metaTitle)) {
+          addJsonItem('thuoc_tinh.json', 'Tên văn bản', String(metaTitle).trim());
+          thuocTinhCount++;
+        }
         const attrs = comp.thuoc_tinh.attributes || {};
-        for (const key of Object.keys(ATTR_KEY_TO_LABEL)) {
-          const val = String(attrs[key] ?? '').trim();
-          if (val && val !== '--') thuocTinhCount++;
+        for (const [key, labelName] of Object.entries(ATTR_KEY_TO_LABEL)) {
+          if (isNonNullJsonValue(attrs[key])) {
+            addJsonItem('thuoc_tinh.json', labelName, String(attrs[key]).trim());
+            thuocTinhCount++;
+          }
         }
       }
 
+      // 2. Collect non-null labels & relation groups from luoc_do.json
       let luocDoCount = 0;
       const hasLuocDo = Boolean(comp.luoc_do && Array.isArray(comp.luoc_do.relations));
+      const luocDoRelBuckets = new Map();
       if (hasLuocDo) {
         comp.luoc_do.relations.forEach(relGroup => {
-          const docsArr = Array.isArray(relGroup?.documents) ? relGroup.documents : [];
+          if (!relGroup) return;
+          const mapped = mapLuocDoRelationToLabelAndRelType(relGroup.relation_type);
+          const docsArr = Array.isArray(relGroup.documents) ? relGroup.documents : [];
           docsArr.forEach(d => {
-            if (!d) return;
-            const desc = String(d.title || d.name || d.so_hieu || d.item_id || '').trim();
-            if (desc && desc !== '--') {
-              luocDoCount++;
+            if (!d || typeof d !== 'object') return;
+            const desc = d.title ?? d.name ?? d.so_hieu ?? d.item_id;
+            if (!isNonNullJsonValue(desc)) return;
+            const cleanDesc = String(desc).trim();
+            addJsonItem('luoc_do.json', mapped.entityLabel, cleanDesc, mapped.relationType);
+            luocDoCount++;
+
+            const rBase = getRelationBaseId(mapped.relationType);
+            if (!luocDoRelBuckets.has(rBase)) {
+              luocDoRelBuckets.set(rBase, {
+                baseId: rBase,
+                relType: mapped.relationType,
+                items: []
+              });
             }
+            luocDoRelBuckets.get(rBase).items.push(cleanDesc);
           });
         });
       }
 
+      // 3. Collect non-null labels from muc_luc.json
       let mucLucCount = 0;
       const hasMucLuc = Boolean(comp.muc_luc);
       if (comp.muc_luc) {
@@ -5294,9 +5550,18 @@
           if (!Array.isArray(items)) return;
           items.forEach(item => {
             if (!item || typeof item !== 'object') return;
-            const titleText = String(item.title || '').trim();
-            const numText = String(item.number || '').trim();
-            if (titleText || numText) mucLucCount++;
+            const hasTitle = isNonNullJsonValue(item.title);
+            const hasNum = isNonNullJsonValue(item.number);
+            if (hasTitle || hasNum) {
+              const level = isNonNullJsonValue(item.level) ? String(item.level).trim() : 'Điều';
+              const displayText = hasTitle
+                ? normalizeTocValue(item.title)
+                : `${level} ${String(item.number).trim()}`;
+              if (isNonNullJsonValue(displayText)) {
+                addJsonItem('muc_luc.json', level, displayText);
+                mucLucCount++;
+              }
+            }
             if (Array.isArray(item.children) && item.children.length > 0) {
               walkTocCount(item.children);
             }
@@ -5306,21 +5571,144 @@
       }
 
       const jsonTotalCount = thuocTinhCount + luocDoCount + mucLucCount;
-      const docEntityCount = anns.length;
+      const docEntityCount = nonNullAnns.length;
 
-      // 2. Count non-"Thuộc" relations from document vs non-null items in luoc_do.json
-      const annIdSet = new Set(anns.map(a => a.id));
-      const validRels = rels.filter(r => annIdSet.has(r.fromId) && annIdSet.has(r.toId));
+      // Build group-by-label diff rows & match specific missing items from JSON
+      const entityGroups = new Map();
+      const ensureEntityGroup = (baseId, displayLabel) => {
+        if (!entityGroups.has(baseId)) {
+          entityGroups.set(baseId, {
+            baseId,
+            label: displayLabel,
+            docAnns: [],
+            jsonItems: []
+          });
+        }
+        return entityGroups.get(baseId);
+      };
+
+      nonNullAnns.forEach(a => {
+        const cleanLabel = String(a.label).trim();
+        ensureEntityGroup(getEntityBaseId(cleanLabel), cleanLabel).docAnns.push(a);
+      });
+      jsonItems.forEach(it => {
+        ensureEntityGroup(it.baseId, it.label).jsonItems.push(it);
+      });
+
+      const entityDiffRows = [];
+      const missingJsonItems = [];
+      entityGroups.forEach(grp => {
+        const docCount = grp.docAnns.length;
+        const jsonCount = grp.jsonItems.length;
+        const missingCount = Math.max(0, jsonCount - docCount);
+        const extraCount = Math.max(0, docCount - jsonCount);
+
+        // Greedy 1-to-1 matching to pinpoint which specific JSON items are not yet annotated
+        const usedAnnIndices = new Set();
+        const unmatchedInGroup = [];
+        grp.jsonItems.forEach(jItem => {
+          let matchedIdx = -1;
+          for (let i = 0; i < grp.docAnns.length; i++) {
+            if (usedAnnIndices.has(i)) continue;
+            if (isDiffItemMatched(jItem.value, grp.docAnns[i].text)) {
+              matchedIdx = i;
+              break;
+            }
+          }
+          if (matchedIdx !== -1) {
+            usedAnnIndices.add(matchedIdx);
+          } else {
+            unmatchedInGroup.push(jItem);
+          }
+        });
+
+        // If docCount < jsonCount and exact text matching left more than missingCount, keep up to missingCount or all unmatched when text actually differs
+        const specificMissing = (missingCount > 0)
+          ? (unmatchedInGroup.length > 0 ? unmatchedInGroup : grp.jsonItems.slice(docCount))
+          : (unmatchedInGroup.length > 0 && grp.docAnns.length === 0 ? unmatchedInGroup : []);
+
+        if (missingCount > 0) {
+          specificMissing.forEach(m => missingJsonItems.push(m));
+        }
+
+        if (docCount !== jsonCount) {
+          entityDiffRows.push({
+            baseId: grp.baseId,
+            label: grp.label,
+            docCount,
+            jsonCount,
+            missingCount,
+            extraCount,
+            sources: Array.from(new Set(grp.jsonItems.map(x => x.sourceTag))),
+            specificMissing
+          });
+        }
+      });
+      entityDiffRows.sort((a, b) => (b.missingCount - a.missingCount) || (b.extraCount - a.extraCount) || a.baseId.localeCompare(b.baseId, 'en', { numeric: true }));
+
+      // 4. Count non-"Thuộc" relations from document vs non-null items in luoc_do.json
+      const annMapById = new Map(nonNullAnns.map(a => [a.id, a]));
+      const validRels = rawRels.filter(r => r && isNonNullJsonValue(r.type) && annMapById.has(r.fromId) && annMapById.has(r.toId));
       let thuocRelCount = 0;
       let nonThuocRelCount = 0;
+      const docRelBuckets = new Map();
+
       validRels.forEach(r => {
         const normType = normalizeIdLookupName(r.type);
         if (normType === 'thuộc' || normType === 'thuoc') {
           thuocRelCount++;
         } else {
           nonThuocRelCount++;
+          const rBase = getRelationBaseId(r.type);
+          if (!docRelBuckets.has(rBase)) {
+            docRelBuckets.set(rBase, { baseId: rBase, relType: String(r.type).trim(), rels: [] });
+          }
+          const toSpan = annMapById.get(r.toId);
+          docRelBuckets.get(rBase).rels.push({ rel: r, targetText: toSpan ? toSpan.text : '' });
         }
       });
+
+      const relationDiffRows = [];
+      const allRelBases = new Set([...luocDoRelBuckets.keys(), ...docRelBuckets.keys()]);
+      allRelBases.forEach(rBase => {
+        const ld = luocDoRelBuckets.get(rBase);
+        const dr = docRelBuckets.get(rBase);
+        const jsonCount = ld ? ld.items.length : 0;
+        const docCount = dr ? dr.rels.length : 0;
+        if (docCount !== jsonCount) {
+          const usedTargetIdx = new Set();
+          const missingTargets = [];
+          if (ld) {
+            ld.items.forEach(titleStr => {
+              let foundIdx = -1;
+              if (dr) {
+                for (let i = 0; i < dr.rels.length; i++) {
+                  if (usedTargetIdx.has(i)) continue;
+                  if (isDiffItemMatched(titleStr, dr.rels[i].targetText)) {
+                    foundIdx = i;
+                    break;
+                  }
+                }
+              }
+              if (foundIdx !== -1) {
+                usedTargetIdx.add(foundIdx);
+              } else {
+                missingTargets.push(titleStr);
+              }
+            });
+          }
+          relationDiffRows.push({
+            baseId: rBase,
+            relType: (ld && ld.relType) || (dr && dr.relType) || rBase,
+            docCount,
+            jsonCount,
+            missingCount: Math.max(0, jsonCount - docCount),
+            extraCount: Math.max(0, docCount - jsonCount),
+            missingTargets
+          });
+        }
+      });
+      relationDiffRows.sort((a, b) => (b.missingCount - a.missingCount) || (b.extraCount - a.extraCount) || a.baseId.localeCompare(b.baseId, 'en', { numeric: true }));
 
       return {
         docEntityCount,
@@ -5336,8 +5724,153 @@
         thuocRelCount,
         nonThuocRelCount,
         isEntityMatched: docEntityCount === jsonTotalCount,
-        isRelMatched: nonThuocRelCount === luocDoCount
+        isRelMatched: nonThuocRelCount === luocDoCount,
+        entityDiffRows,
+        missingJsonItems,
+        relationDiffRows
       };
+    }
+
+    function renderExportDiffDetailsPanel() {
+      const panel = document.getElementById('exportDiffDetailsPanel');
+      const ctx = state.pendingExportContext;
+      if (!panel || !ctx || !ctx.stats) return;
+
+      const s = ctx.stats;
+      const missingEntityRows = (s.entityDiffRows || []).filter(r => r.missingCount > 0);
+      const extraEntityRows = (s.entityDiffRows || []).filter(r => r.extraCount > 0);
+
+      let entityHtml = '';
+      if (!s.hasAnyJson) {
+        entityHtml = `<div style="font-size:12px;color:#64748b;">Chưa nạp file JSON (<code>thuoc_tinh.json</code>, <code>luoc_do.json</code>, <code>muc_luc.json</code>) để đối chiếu chi tiết.</div>`;
+      } else if (s.entityDiffRows.length === 0) {
+        entityHtml = `<div style="font-size:12px;color:#166534;font-weight:700;">Các loại nhãn khớp hoàn toàn giữa văn bản và file JSON (đã bỏ qua giá trị null).</div>`;
+      } else {
+        const rowsHtml = s.entityDiffRows.map(r => {
+          const statusTag = r.missingCount > 0
+            ? `<span class="export-diff-tag missing">Thiếu ${r.missingCount}</span>`
+            : `<span class="export-diff-tag extra">Nhiều hơn +${r.extraCount}</span>`;
+          return `
+            <tr>
+              <td><b>[${escapeHtml(r.baseId)}]</b> ${escapeHtml(r.label)}</td>
+              <td style="text-align:center;">${r.docCount}</td>
+              <td style="text-align:center;">${r.jsonCount}</td>
+              <td>${statusTag}</td>
+            </tr>
+          `;
+        }).join('');
+
+        let specificHtml = '';
+        if (s.missingJsonItems.length > 0) {
+          const maxShow = 40;
+          const shown = s.missingJsonItems.slice(0, maxShow);
+          const remain = s.missingJsonItems.length - shown.length;
+          specificHtml = `
+            <div style="margin-top:8px;font-size:11.5px;font-weight:700;color:#991b1b;">
+              Danh sách các mục từ JSON đang thiếu trong văn bản (${s.missingJsonItems.length}):
+            </div>
+            <div class="export-missing-list">
+              ${shown.map(m => `
+                <div class="export-missing-item">
+                  <b>[${escapeHtml(m.baseId)}] ${escapeHtml(m.label)}</b>
+                  <span style="color:#64748b;">(${escapeHtml(m.sourceTag)})</span>:
+                  "${escapeHtml(truncate(m.value, 140))}"
+                </div>
+              `).join('')}
+              ${remain > 0 ? `<div style="font-size:11.5px;color:#991b1b;font-style:italic;">... và ${remain} mục thiếu khác (thuộc ${missingEntityRows.map(r => r.label).join(', ')}).</div>` : ''}
+            </div>
+          `;
+        }
+
+        entityHtml = `
+          <table class="export-diff-table">
+            <thead>
+              <tr>
+                <th>Nhãn (đã bỏ null)</th>
+                <th style="text-align:center;">Văn bản</th>
+                <th style="text-align:center;">JSON</th>
+                <th>Chênh lệch</th>
+              </tr>
+            </thead>
+            <tbody>${rowsHtml}</tbody>
+          </table>
+          ${specificHtml}
+          ${extraEntityRows.length > 0 ? `<div style="margin-top:6px;font-size:11.5px;color:#92400e;">Ghi chú: Văn bản đang gán nhiều hơn JSON ở nhãn: ${extraEntityRows.map(r => `<b>${escapeHtml(r.label)}</b> (+${r.extraCount})`).join(', ')}.</div>` : ''}
+        `;
+      }
+
+      let relHtml = '';
+      if (!s.hasLuocDo && s.nonThuocRelCount === 0) {
+        relHtml = `<div style="font-size:12px;color:#64748b;">Chưa có file <code>luoc_do.json</code> và chưa có quan hệ khác "Thuộc".</div>`;
+      } else if (s.relationDiffRows.length === 0) {
+        relHtml = `<div style="font-size:12px;color:#166534;font-weight:700;">Số lượng từng loại quan hệ khác "Thuộc" khớp 100% với luoc_do.json (đã bỏ qua nhóm null/rỗng).</div>`;
+      } else {
+        const relRowsHtml = s.relationDiffRows.map(r => {
+          const statusTag = r.missingCount > 0
+            ? `<span class="export-diff-tag missing">Thiếu ${r.missingCount}</span>`
+            : `<span class="export-diff-tag extra">Tự gán thêm +${r.extraCount}</span>`;
+          const missingTargetsPreview = (r.missingCount > 0 && r.missingTargets.length > 0)
+            ? `<div style="margin-top:3px;font-size:11px;color:#881337;">Chưa nối (${r.missingTargets.length}): ${r.missingTargets.slice(0, 5).map(t => `"${escapeHtml(truncate(t, 70))}"`).join('; ')}${r.missingTargets.length > 5 ? ` ... (+${r.missingTargets.length - 5})` : ''}</div>`
+            : '';
+          return `
+            <tr>
+              <td>
+                <b>[${escapeHtml(r.baseId)}]</b> ${escapeHtml(r.relType)}
+                ${missingTargetsPreview}
+              </td>
+              <td style="text-align:center;">${r.docCount}</td>
+              <td style="text-align:center;">${r.jsonCount}</td>
+              <td>${statusTag}</td>
+            </tr>
+          `;
+        }).join('');
+
+        relHtml = `
+          <table class="export-diff-table">
+            <thead>
+              <tr>
+                <th>Quan hệ khác "Thuộc" (đã bỏ null)</th>
+                <th style="text-align:center;">Tự gán</th>
+                <th style="text-align:center;">luoc_do</th>
+                <th>Chênh lệch</th>
+              </tr>
+            </thead>
+            <tbody>${relRowsHtml}</tbody>
+          </table>
+        `;
+      }
+
+      panel.innerHTML = `
+        <div>
+          <div class="export-diff-section-title">
+            <span>1. Chi tiết chênh lệch Nhãn (Văn bản vs Các file JSON)</span>
+            <span style="font-size:11px;color:#64748b;">Tổng thiếu theo loại: ${missingEntityRows.reduce((acc, r) => acc + r.missingCount, 0)}</span>
+          </div>
+          ${entityHtml}
+        </div>
+        <div style="border-top:1px dashed #cbd5e1;padding-top:10px;">
+          <div class="export-diff-section-title">
+            <span>2. Chi tiết chênh lệch Quan hệ khác "Thuộc" (Tự gán vs luoc_do.json)</span>
+            <span style="font-size:11px;color:#64748b;">Tổng thiếu theo loại: ${s.relationDiffRows.reduce((acc, r) => acc + r.missingCount, 0)}</span>
+          </div>
+          ${relHtml}
+        </div>
+      `;
+    }
+
+    function toggleExportDiffDetails(forceOpen = null) {
+      const panel = document.getElementById('exportDiffDetailsPanel');
+      const btn = document.getElementById('btnToggleExportDiff');
+      if (!panel) return;
+      const shouldOpen = forceOpen !== null ? Boolean(forceOpen) : !panel.classList.contains('open');
+      if (shouldOpen) {
+        renderExportDiffDetailsPanel();
+        panel.classList.add('open');
+        if (btn) btn.textContent = 'Ẩn chênh lệch';
+      } else {
+        panel.classList.remove('open');
+        if (btn) btn.textContent = 'Xem chênh lệch';
+      }
     }
 
     async function renderExportDirStatusInModal() {
@@ -5409,7 +5942,7 @@
         entityBox.className = `export-compare-card ${entityCls}`;
         entityBox.innerHTML = `
           <div class="export-compare-title">
-            <span>1. So sánh số lượng nhãn: Văn bản vs Các file JSON</span>
+            <span>1. So sánh số lượng nhãn: Văn bản vs Các file JSON (đã bỏ null)</span>
             <span style="font-size:11.5px;font-weight:800;">${escapeHtml(entityBadge)}</span>
           </div>
           <div class="export-compare-metrics">
@@ -5418,12 +5951,12 @@
               <div class="export-metric-value">${stats.docEntityCount.toLocaleString('vi-VN')}</div>
             </div>
             <div class="export-metric-box">
-              <div class="export-metric-label">Tổng nhãn trong các file JSON</div>
+              <div class="export-metric-label">Tổng nhãn khác null trong các file JSON</div>
               <div class="export-metric-value">${stats.jsonTotalCount.toLocaleString('vi-VN')}</div>
             </div>
           </div>
           <div class="export-compare-detail">
-            Chi tiết JSON: <b>thuoc_tinh.json</b>: ${stats.thuocTinhCount.toLocaleString('vi-VN')} ·
+            Chi tiết JSON (bỏ null): <b>thuoc_tinh.json</b>: ${stats.thuocTinhCount.toLocaleString('vi-VN')} ·
             <b>luoc_do.json</b>: ${stats.luocDoCount.toLocaleString('vi-VN')} ·
             <b>muc_luc.json</b>: ${stats.mucLucCount.toLocaleString('vi-VN')}
           </div>
@@ -5440,7 +5973,7 @@
         relBox.className = `export-compare-card ${relCls}`;
         relBox.innerHTML = `
           <div class="export-compare-title">
-            <span>2. So sánh quan hệ khác "Thuộc" vs luoc_do.json</span>
+            <span>2. So sánh quan hệ khác "Thuộc" vs luoc_do.json (đã bỏ null)</span>
             <span style="font-size:11.5px;font-weight:800;">${escapeHtml(relBadge)}</span>
           </div>
           <div class="export-compare-metrics">
@@ -5459,6 +5992,16 @@
           </div>
         `;
       }
+
+      const inlineDiffEl = document.getElementById('exportDiffSummaryInline');
+      if (inlineDiffEl) {
+        const missingEntTotal = (stats.entityDiffRows || []).reduce((acc, r) => acc + r.missingCount, 0);
+        const missingRelTotal = (stats.relationDiffRows || []).reduce((acc, r) => acc + r.missingCount, 0);
+        inlineDiffEl.textContent = (missingEntTotal === 0 && missingRelTotal === 0 && stats.entityDiffRows.length === 0 && stats.relationDiffRows.length === 0)
+          ? 'Đã đối chiếu (bỏ nhãn null): Khớp hoàn toàn.'
+          : `Phát hiện chênh lệch (bỏ null): Thiếu ${missingEntTotal} nhãn · Thiếu ${missingRelTotal} quan hệ.`;
+      }
+      toggleExportDiffDetails(false);
 
       await renderExportDirStatusInModal();
       document.getElementById('exportJsonConfirmModal').classList.add('open');
@@ -5949,6 +6492,7 @@
         }
         doc.text = newText;
         doc.blocks = buildBlocksFromPlainText(doc.text);
+        const prevAnnCount = doc.annotations.length;
         const validAnns = [];
         doc.annotations.forEach(a => {
           if (doc.text.slice(a.start, a.end) === a.text) {
@@ -5963,6 +6507,11 @@
           }
         });
         doc.annotations = validAnns;
+        const validIds = new Set(validAnns.map(a => a.id));
+        doc.relations = (doc.relations || []).filter(r => validIds.has(r.fromId) && validIds.has(r.toId));
+        if (validAnns.length < prevAnnCount) {
+          compactDocIdsAfterEntityDelete(doc);
+        }
       }
 
       closeModal('addTextModal');
@@ -6716,11 +7265,23 @@
       const comp = doc?.companionJson || {};
       const candidates = [];
 
-      // Preserve existing user modifications if any
+      // Preserve existing user modifications only within the same document, indexed per occurrence
+      // so repeated TOC headings / citations across chapters or relation groups do not collide or drop
+      const prevCandidates = (state.jsonCandidatesDocId === doc.id && Array.isArray(state.jsonCandidates))
+        ? state.jsonCandidates
+        : [];
       const existingMap = new Map();
-      (state.jsonCandidates || []).forEach(c => {
-        const k = `${c.sourceTag}__${c.rawJsonValue}`;
-        existingMap.set(k, { selected: c.selected, label: c.label, value: c.value, relationType: c.relationType });
+      const prevOccCounts = new Map();
+      prevCandidates.forEach(c => {
+        const occBase = `${c.sourceTag}__${c.sourceLabel || c.label}__${c.rawJsonValue}`;
+        const occIdx = (prevOccCounts.get(occBase) || 0) + 1;
+        prevOccCounts.set(occBase, occIdx);
+        existingMap.set(`${occBase}__#${occIdx}`, {
+          selected: c.selected,
+          label: c.label,
+          value: c.value,
+          relationType: c.relationType
+        });
       });
 
       const loadedSources = [];
@@ -6737,11 +7298,15 @@
       }
 
       let candSeq = 0;
+      const currOccCounts = new Map();
       const pushCandidate = (label, rawValue, relationType, sourceTag) => {
-        const val = String(rawValue || '').trim();
-        if (!val || val === '--') return;
+        if (!isNonNullJsonValue(label) || !isNonNullJsonValue(rawValue)) return;
+        const val = String(rawValue).trim();
 
-        const key = `${sourceTag}__${val}`;
+        const occBase = `${sourceTag}__${label}__${val}`;
+        const occIdx = (currOccCounts.get(occBase) || 0) + 1;
+        currOccCounts.set(occBase, occIdx);
+        const key = `${occBase}__#${occIdx}`;
         const prev = existingMap.get(key);
 
         const cleanInputVal = (sourceTag === 'muc_luc.json') ? normalizeTocValue(val) : val.replace(/[\r\n\t]+/g, ' ').replace(/\s{2,}/g, ' ').trim();
@@ -6752,11 +7317,6 @@
         const finalLabel = prev ? prev.label : label;
         const finalRel = prev ? prev.relationType : (relationType || '');
 
-        // Avoid duplicate candidate with same label, value, relation, and source
-        if (candidates.some(c => c.sourceTag === sourceTag && c.label === finalLabel && c.value === displayValue && c.relationType === finalRel)) {
-          return;
-        }
-
         const isMatch = Boolean(findAttributeMatchInDocText(doc.text, finalLabel, displayValue));
         candSeq++;
 
@@ -6764,6 +7324,7 @@
           id: 'jc_' + candSeq + '_' + Math.random().toString(36).substr(2, 6),
           selected: finalSelected,
           label: finalLabel,
+          sourceLabel: label,
           value: displayValue,
           rawJsonValue: val,
           relationType: finalRel,
@@ -6775,12 +7336,12 @@
       // 1. Extract from thuoc_tinh.json
       if (comp.thuoc_tinh) {
         const metaTitle = comp.thuoc_tinh.metadata?.title;
-        if (metaTitle) {
+        if (isNonNullJsonValue(metaTitle)) {
           pushCandidate('Tên văn bản', metaTitle, '', 'thuoc_tinh.json');
         }
         const attrs = comp.thuoc_tinh.attributes || {};
         for (const [key, labelName] of Object.entries(ATTR_KEY_TO_LABEL)) {
-          if (attrs[key] && String(attrs[key]).trim() !== '--') {
+          if (isNonNullJsonValue(attrs[key])) {
             pushCandidate(labelName, attrs[key], '', 'thuoc_tinh.json');
           }
         }
@@ -6791,8 +7352,10 @@
         comp.luoc_do.relations.forEach(relGroup => {
           const { entityLabel } = mapLuocDoRelationToLabelAndRelType(relGroup.relation_type);
           (relGroup.documents || []).forEach(relDoc => {
-            if (relDoc && relDoc.title) {
-              pushCandidate(entityLabel, relDoc.title, '', 'luoc_do.json');
+            if (!relDoc || typeof relDoc !== 'object') return;
+            const docDesc = relDoc.title ?? relDoc.name ?? relDoc.so_hieu ?? relDoc.item_id;
+            if (isNonNullJsonValue(docDesc)) {
+              pushCandidate(entityLabel, docDesc, '', 'luoc_do.json');
             }
           });
         });
@@ -6812,9 +7375,9 @@
           if (!Array.isArray(items)) return;
           items.forEach(item => {
             if (!item || typeof item !== 'object') return;
-            const level = String(item.level || 'Điều').trim();
-            const titleText = String(item.title || '').trim();
-            const numText = String(item.number || '').trim();
+            const level = isNonNullJsonValue(item.level) ? String(item.level).trim() : 'Điều';
+            const titleText = isNonNullJsonValue(item.title) ? String(item.title).trim() : '';
+            const numText = isNonNullJsonValue(item.number) ? String(item.number).trim() : '';
 
             let displayText = '';
             if (titleText) {
@@ -6823,7 +7386,7 @@
               displayText = `${level} ${numText}`;
             }
 
-            if (displayText) {
+            if (isNonNullJsonValue(displayText)) {
               pushCandidate(level, displayText, '', 'muc_luc.json');
             }
 
@@ -6843,6 +7406,7 @@
         });
       }
 
+      state.jsonCandidatesDocId = doc.id;
       state.jsonCandidates = candidates;
       renderJsonCandidatesTable();
     }
@@ -7164,23 +7728,57 @@
       const createdSpanItems = [];
       const usedRangeKeys = new Set();
 
+      // Only search text that already existed before this batch so newly appended footer lines
+      // cannot collide with subsequent items in the same import batch.
+      const batchPreAppendLen = doc.text.length;
+      const existingFooterIdx = doc.text.indexOf('--- THÔNG TIN THUỘC TÍNH & LƯỢC ĐỒ TỪ FILE JSON ---');
+      const bodyEnd = existingFooterIdx !== -1 ? existingFooterIdx : batchPreAppendLen;
+      const bodyText = doc.text.slice(0, bodyEnd);
+      const boundedDocText = doc.text.slice(0, batchPreAppendLen);
+
+      const findMatchForCandidate = (item, startFrom = 0) => {
+        const val = String(item.value || '').trim();
+        let pos = Math.max(0, startFrom || 0);
+
+        // Phase 1: Search document body before any JSON footer so footer lines never shadow body matches
+        if (pos < bodyEnd) {
+          let m = findAttributeMatchInDocText(bodyText, item.label, val, pos);
+          if (!m && item.rawJsonValue && item.rawJsonValue !== val) {
+            m = findAttributeMatchInDocText(bodyText, item.label, item.rawJsonValue, pos);
+          }
+          if (m) return m;
+        }
+
+        // Phase 2: Search previously appended JSON footer lines matching this exact label prefix
+        if (existingFooterIdx !== -1) {
+          let fPos = Math.max(pos, existingFooterIdx);
+          while (fPos < batchPreAppendLen) {
+            let fm = findAttributeMatchInDocText(boundedDocText, item.label, val, fPos);
+            if (!fm && item.rawJsonValue && item.rawJsonValue !== val) {
+              fm = findAttributeMatchInDocText(boundedDocText, item.label, item.rawJsonValue, fPos);
+            }
+            if (!fm) return null;
+            const lineStart = boundedDocText.lastIndexOf('\n', fm.start) + 1;
+            const linePrefix = boundedDocText.slice(lineStart, fm.start);
+            if (linePrefix === `[${item.label}]: `) {
+              return fm;
+            }
+            fPos = Math.max(fm.end, fPos + 1);
+          }
+        }
+        return null;
+      };
+
       selectedItems.forEach(item => {
         const val = String(item.value || '').trim();
         if (!val) return;
 
-        let match = findAttributeMatchInDocText(doc.text, item.label, val, 0);
-        if (!match && item.rawJsonValue && item.rawJsonValue !== val) {
-          match = findAttributeMatchInDocText(doc.text, item.label, item.rawJsonValue, 0);
-        }
+        let match = findMatchForCandidate(item, 0);
 
         // If the matched range was already assigned in this batch (e.g. duplicate heading in another chapter), find the next occurrence
         while (match && usedRangeKeys.has(`${item.label}_${match.start}_${match.end}`)) {
-          const nextMatch = findAttributeMatchInDocText(doc.text, item.label, val, match.end);
-          if (nextMatch) {
-            match = nextMatch;
-          } else {
-            break;
-          }
+          const nextPos = Math.max(match.end, match.start + 1);
+          match = findMatchForCandidate(item, nextPos);
         }
 
         if (match) {
@@ -7194,6 +7792,7 @@
             addedHeaderLine = true;
           }
           const range = appendLineAndGetValueRange(`[${item.label}]: `, val);
+          usedRangeKeys.add(`${item.label}_${range.start}_${range.end}`);
           const spanId = ensureEntityAnnotation(item.label, range.start, range.end);
           createdSpanItems.push({ spanId, item });
           labeledCount++;
