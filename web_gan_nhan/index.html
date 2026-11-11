@@ -405,13 +405,13 @@
     }
 
     .doc-paper {
-      max-width: 920px;
+      max-width: 980px;
       margin: 0 auto;
       background: #fff;
       border-radius: 12px;
       box-shadow: var(--shadow);
       border: 1px solid var(--border);
-      padding: 38px 44px;
+      padding: 38px 44px 38px 124px;
       min-height: 75vh;
       position: relative;
     }
@@ -971,20 +971,40 @@
       line-height: 1.5;
     }
 
-    /* FLOATING ACTION POPOVER FOR CLICKED SPAN (CHỈ HIỂN THỊ NỐI QUAN HỆ VÀ XÓA) */
+    /* FLOATING ACTION POPOVER FOR CLICKED SPAN (CHỈ HIỂN THỊ NỐI QUAN HỆ VÀ XÓA, CÓ THỂ KÉO DI CHUYỂN) */
     .span-action-popover {
       position: fixed;
       display: none;
       align-items: center;
       gap: 6px;
-      padding: 6px 10px;
+      padding: 6px 9px 6px 8px;
       background: #0f172a;
       border: 1px solid #334155;
       border-radius: 8px;
       box-shadow: 0 8px 24px rgba(15, 23, 42, 0.45);
       z-index: 9999;
       pointer-events: auto;
+      user-select: none;
+      cursor: grab;
       animation: popoverFadeIn 0.12s ease-out;
+    }
+    .span-action-popover.dragging {
+      cursor: grabbing;
+      opacity: 0.92;
+      box-shadow: 0 12px 30px rgba(15, 23, 42, 0.55);
+    }
+    .popover-drag-handle {
+      display: inline-block;
+      width: 6px;
+      height: 15px;
+      border-left: 2px dotted #94a3b8;
+      border-right: 2px dotted #94a3b8;
+      margin-right: 4px;
+      cursor: grab;
+      flex-shrink: 0;
+    }
+    .span-action-popover:hover .popover-drag-handle {
+      border-color: #e2e8f0;
     }
     .span-action-popover.visible {
       display: flex;
@@ -1404,8 +1424,9 @@
         </div>
       </div>
 
-      <!-- FLOATING ACTION POPOVER FOR CLICKED SPAN (CHỈ HIỂN THỊ NỐI QUAN HỆ & XÓA) -->
-      <div id="spanActionPopover" class="span-action-popover">
+      <!-- FLOATING ACTION POPOVER FOR CLICKED SPAN (CHỈ HIỂN THỊ NỐI QUAN HỆ & XÓA, CÓ THỂ KÉO DI CHUYỂN) -->
+      <div id="spanActionPopover" class="span-action-popover" onmousedown="startDragSpanPopover(event)" title="Giữ chuột kéo thẻ này sang vị trí khác nếu bị đè lên văn bản">
+        <span class="popover-drag-handle" aria-hidden="true"></span>
         <button class="btn btn-primary btn-sm" onclick="startRelationLinking(state.selectedSpanId)" title="Nối mối quan hệ từ thực thể này sang thực thể khác">
           Nối quan hệ
         </button>
@@ -1433,7 +1454,7 @@
       </div>
 
       <!-- Scrollable Document Area -->
-      <div class="doc-scroll-container" id="docScrollContainer" onscroll="drawRelationLinesOnDoc()" onclick="handleBackgroundClick(event)">
+      <div class="doc-scroll-container" id="docScrollContainer" onscroll="handleDocScroll()" onclick="handleBackgroundClick(event)">
         <div class="doc-paper" id="docPaper">
           <svg id="relationSvgOverlay"></svg>
           <div class="doc-header-title">
@@ -1503,7 +1524,7 @@
         <div class="tab-content" id="tabContentPreview">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
             <span style="font-size:12px;font-weight:700;color:var(--text-muted);">
-              Đầu ra (Nhóm Entities & Relation theo ID):
+              Đầu ra (Schema v1.0 JSON):
             </span>
             <button class="btn btn-outline btn-sm" onclick="copyStreamlinedJson()">Copy JSON</button>
           </div>
@@ -1803,6 +1824,7 @@
     ];
 
     const DEFAULT_RELATIONS = [
+      "Thuộc",
       "Căn cứ ban hành",
       "Được hướng dẫn áp dụng",
       "Được quy định chi tiết, hướng dẫn thi hành",
@@ -1826,7 +1848,7 @@
       "Quy định tạm ngưng/ gia hạn/ công bố tiếp tục còn hiệu lực"
     ];
 
-    const SAMPLE_INITIAL_DOC = {"id": "doc_default_1", "fileName": "001_2007_QĐ-BCT_82272.docx", "text": "Quyết định số 001/2007/QĐ-BCT Về việc bổ sung Phụ lục 3 Quy chế cấp Giấy chứng nhận xuất xứ hàng hóa của Việt Nam-mẫu D để hưởng các ưu đãi theo “Hiệp định về chương trình ưu đãi thuế quan có hiệu lực chung (CEPT) để thành lập Khu vực Mậu dịch Tự do ASEAN” ban hành kèm theo Quyết định của Bộ trưởng Bộ Thương mại số 1420/2004/QĐ-BTM ngày 04 tháng 10 năm 2004\nBỘ CÔNG THƯƠNG.\nCỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM\nĐộc lập – Tự do – Hạnh phúc\nSố: 001/2007/QĐ-BCT\nHà Nội, ngày 27 tháng 8 năm 2007\nQUYẾT ĐỊNH\nVề việc bổ sung Phụ lục 3 Quy chế cấp Giấy chứng nhận xuất xứ hàng\nhóa của Việt Nam-mẫu D để hưởng các ưu đãi theo “Hiệp định về\nchương trình ưu đãi thuế quan có hiệu lực chung (CEPT) để thành lập\nKhu vực Mậu dịch Tự do ASEAN” ban hành kèm theo Quyết định của\nBộ trưởng Bộ Thương mại số 1420/2004/QĐ-BTM ngày 04 tháng 10\nnăm 2004\n_____________________________________________\nBỘ TRƯỞNG BỘ CÔNG THƯƠNG\nCăn cứ Nghị quyết số 01/2007/QH12 ngày 31 tháng 7 năm 2007 của Quốc hội nước Cộng hoà Xã hội Chủ nghĩa Việt Nam khoá XII, kỳ họp thứ nhất về cơ cấu tổ chức của Chính phủ và số Phó Thủ tướng Chính phủ nhiệm kỳ khoá XII;\nCăn cứ Nghị định số 86/2002/NĐ-CP ngày 05 tháng 11 năm 2002 của Chính phủ quy định chức năng, nhiệm vụ, quyền hạn và cơ cấu tổ chức của Bộ, cơ quan ngang Bộ;\nTheo đề nghị của Vụ trưởng Vụ Xuất Nhập khẩu,\nQUYẾT ĐỊNH:\nĐiều 1. Bổ sung tên và mã số tại nhóm 4 Điều 1 Phụ lục 3 Quy chế cấp Giấy chứng nhận xuất xứ hàng hoá của Việt Nam - mẫu D để hưởng các ưu đãi theo \"Hiệp định về chương trình ưu đãi thuế quan có hiệu lực chung (CEPT) để thành lập Khu vực Mậu dịch Tự do ASEAN \" ban hành kèm theo Quyết định số 1420/2004/QĐ-BTM ngày 4 tháng 10 năm 2004 của Bộ trưởng Bộ Thương mại như sau:\n1. Ban Quản lý các Khu công nghiệp tỉnh Bình Phước, mã số 67\n2. Ban Quản lý Khu Kinh tế cửa khẩu quốc tế Bờ Y, mã số 68\nĐiều 2. Quyết định này có hiệu lực thi hành sau 15 ngày, kể từ ngày đăng Công báo.\nĐiều 3. Vụ trưởng Vụ Xuất Nhập khẩu, Thủ trưởng các cơ quan, đơn vị thuộc Bộ Công Thương, các tổ chức, cá nhân có liên quan chịu trách nhiệm thi hành Quyết định này./.\nKT. BỘ TRƯỞNG\nTHỨ TRƯỞNG\n(Đã ký)\nNguyễn Thành Biên", "blocks": [{"type": "p", "text": "Quyết định số 001/2007/QĐ-BCT Về việc bổ sung Phụ lục 3 Quy chế cấp Giấy chứng nhận xuất xứ hàng hóa của Việt Nam-mẫu D để hưởng các ưu đãi theo “Hiệp định về chương trình ưu đãi thuế quan có hiệu lực chung (CEPT) để thành lập Khu vực Mậu dịch Tự do ASEAN” ban hành kèm theo Quyết định của Bộ trưởng Bộ Thương mại số 1420/2004/QĐ-BTM ngày 04 tháng 10 năm 2004", "align": "left", "bold": false, "italic": false, "style": "Heading1", "indent": 0, "start": 0, "end": 359}, {"type": "tbl", "bordered": false, "rows": [[{"colspan": 1, "paras": [{"text": "BỘ CÔNG THƯƠNG.", "align": "center", "bold": false, "italic": false, "style": null, "indent": 0, "start": 360, "end": 375}]}, {"colspan": 1, "paras": [{"text": "CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM", "align": "center", "bold": false, "italic": false, "style": null, "indent": 0, "start": 376, "end": 410}, {"text": "Độc lập – Tự do – Hạnh phúc", "align": "center", "bold": false, "italic": false, "style": null, "indent": 0, "start": 411, "end": 438}]}]]}, {"type": "tbl", "bordered": false, "rows": [[{"colspan": 1, "paras": [{"text": "Số: 001/2007/QĐ-BCT", "align": "center", "bold": false, "italic": false, "style": null, "indent": 0, "start": 439, "end": 458}]}, {"colspan": 1, "paras": [{"text": "Hà Nội, ngày 27 tháng 8 năm 2007", "align": "center", "bold": false, "italic": false, "style": null, "indent": 0, "start": 459, "end": 491}]}]]}, {"type": "p", "text": "QUYẾT ĐỊNH", "align": "center", "bold": true, "italic": false, "style": null, "indent": 0, "start": 492, "end": 502}, {"type": "p", "text": "Về việc bổ sung Phụ lục 3 Quy chế cấp Giấy chứng nhận xuất xứ hàng", "align": "center", "bold": true, "italic": false, "style": null, "indent": 0, "start": 503, "end": 569}, {"type": "p", "text": "hóa của Việt Nam-mẫu D để hưởng các ưu đãi theo “Hiệp định về", "align": "center", "bold": true, "italic": false, "style": null, "indent": 0, "start": 570, "end": 631}, {"type": "p", "text": "chương trình ưu đãi thuế quan có hiệu lực chung (CEPT) để thành lập", "align": "center", "bold": true, "italic": false, "style": null, "indent": 0, "start": 632, "end": 699}, {"type": "p", "text": "Khu vực Mậu dịch Tự do ASEAN” ban hành kèm theo Quyết định của", "align": "center", "bold": true, "italic": false, "style": null, "indent": 0, "start": 700, "end": 762}, {"type": "p", "text": "Bộ trưởng Bộ Thương mại số 1420/2004/QĐ-BTM ngày 04 tháng 10", "align": "center", "bold": true, "italic": false, "style": null, "indent": 0, "start": 763, "end": 823}, {"type": "p", "text": "năm 2004", "align": "center", "bold": true, "italic": false, "style": null, "indent": 0, "start": 824, "end": 832}, {"type": "p", "text": "_____________________________________________", "align": "center", "bold": false, "italic": false, "style": null, "indent": 0, "start": 833, "end": 878}, {"type": "p", "text": "BỘ TRƯỞNG BỘ CÔNG THƯƠNG", "align": "center", "bold": true, "italic": false, "style": null, "indent": 0, "start": 879, "end": 903}, {"type": "p", "text": "Căn cứ Nghị quyết số 01/2007/QH12 ngày 31 tháng 7 năm 2007 của Quốc hội nước Cộng hoà Xã hội Chủ nghĩa Việt Nam khoá XII, kỳ họp thứ nhất về cơ cấu tổ chức của Chính phủ và số Phó Thủ tướng Chính phủ nhiệm kỳ khoá XII;", "align": "justify", "bold": false, "italic": true, "style": null, "indent": 0, "start": 904, "end": 1122}, {"type": "p", "text": "Căn cứ Nghị định số 86/2002/NĐ-CP ngày 05 tháng 11 năm 2002 của Chính phủ quy định chức năng, nhiệm vụ, quyền hạn và cơ cấu tổ chức của Bộ, cơ quan ngang Bộ;", "align": "justify", "bold": false, "italic": true, "style": null, "indent": 0, "start": 1123, "end": 1280}, {"type": "p", "text": "Theo đề nghị của Vụ trưởng Vụ Xuất Nhập khẩu,", "align": "left", "bold": false, "italic": true, "style": null, "indent": 0, "start": 1281, "end": 1326}, {"type": "p", "text": "QUYẾT ĐỊNH:", "align": "center", "bold": true, "italic": false, "style": null, "indent": 0, "start": 1327, "end": 1338}, {"type": "p", "text": "Điều 1. Bổ sung tên và mã số tại nhóm 4 Điều 1 Phụ lục 3 Quy chế cấp Giấy chứng nhận xuất xứ hàng hoá của Việt Nam - mẫu D để hưởng các ưu đãi theo \"Hiệp định về chương trình ưu đãi thuế quan có hiệu lực chung (CEPT) để thành lập Khu vực Mậu dịch Tự do ASEAN \" ban hành kèm theo Quyết định số 1420/2004/QĐ-BTM ngày 4 tháng 10 năm 2004 của Bộ trưởng Bộ Thương mại như sau:", "align": "justify", "bold": false, "italic": false, "style": null, "indent": 0, "start": 1339, "end": 1710}, {"type": "p", "text": "1. Ban Quản lý các Khu công nghiệp tỉnh Bình Phước, mã số 67", "align": "left", "bold": false, "italic": false, "style": null, "indent": 0, "start": 1711, "end": 1771}, {"type": "p", "text": "2. Ban Quản lý Khu Kinh tế cửa khẩu quốc tế Bờ Y, mã số 68", "align": "left", "bold": false, "italic": false, "style": null, "indent": 0, "start": 1772, "end": 1830}, {"type": "p", "text": "Điều 2. Quyết định này có hiệu lực thi hành sau 15 ngày, kể từ ngày đăng Công báo.", "align": "left", "bold": false, "italic": false, "style": null, "indent": 0, "start": 1831, "end": 1913}, {"type": "p", "text": "Điều 3. Vụ trưởng Vụ Xuất Nhập khẩu, Thủ trưởng các cơ quan, đơn vị thuộc Bộ Công Thương, các tổ chức, cá nhân có liên quan chịu trách nhiệm thi hành Quyết định này./.", "align": "justify", "bold": false, "italic": false, "style": null, "indent": 0, "start": 1914, "end": 2081}, {"type": "p", "text": "KT. BỘ TRƯỞNG", "align": "right", "bold": true, "italic": false, "style": null, "indent": 0, "start": 2082, "end": 2095}, {"type": "p", "text": "THỨ TRƯỞNG", "align": "right", "bold": true, "italic": false, "style": null, "indent": 0, "start": 2096, "end": 2106}, {"type": "p", "text": "(Đã ký)", "align": "right", "bold": true, "italic": false, "style": null, "indent": 0, "start": 2107, "end": 2114}, {"type": "p", "text": "Nguyễn Thành Biên", "align": "right", "bold": true, "italic": false, "style": null, "indent": 0, "start": 2115, "end": 2132}], "annotations": [{"id": "sp_ai_1", "label": "Số hiệu", "start": 443, "end": 458, "text": "001/2007/QĐ-BCT"}, {"id": "sp_ai_2", "label": "Cơ quan ban hành", "start": 360, "end": 374, "text": "BỘ CÔNG THƯƠNG"}, {"id": "sp_ai_3", "label": "Ngày ban hành", "start": 467, "end": 491, "text": "ngày 27 tháng 8 năm 2007"}, {"id": "sp_ai_4", "label": "Loại văn bản", "start": 492, "end": 502, "text": "QUYẾT ĐỊNH"}, {"id": "sp_ai_5", "label": "Tên văn bản", "start": 503, "end": 832, "text": "Về việc bổ sung Phụ lục 3 Quy chế cấp Giấy chứng nhận xuất xứ hàng\nhóa của Việt Nam-mẫu D để hưởng các ưu đãi theo “Hiệp định về\nchương trình ưu đãi thuế quan có hiệu lực chung (CEPT) để thành lập\nKhu vực Mậu dịch Tự do ASEAN” ban hành kèm theo Quyết định của\nBộ trưởng Bộ Thương mại số 1420/2004/QĐ-BTM ngày 04 tháng 10\nnăm 2004"}, {"id": "sp_ai_6", "label": "Căn cứ ban hành", "start": 911, "end": 1121, "text": "Nghị quyết số 01/2007/QH12 ngày 31 tháng 7 năm 2007 của Quốc hội nước Cộng hoà Xã hội Chủ nghĩa Việt Nam khoá XII, kỳ họp thứ nhất về cơ cấu tổ chức của Chính phủ và số Phó Thủ tướng Chính phủ nhiệm kỳ khoá XII"}, {"id": "sp_ai_7", "label": "Căn cứ ban hành", "start": 1130, "end": 1279, "text": "Nghị định số 86/2002/NĐ-CP ngày 05 tháng 11 năm 2002 của Chính phủ quy định chức năng, nhiệm vụ, quyền hạn và cơ cấu tổ chức của Bộ, cơ quan ngang Bộ"}, {"id": "sp_ai_8", "label": "Điều", "start": 1339, "end": 1710, "text": "Điều 1. Bổ sung tên và mã số tại nhóm 4 Điều 1 Phụ lục 3 Quy chế cấp Giấy chứng nhận xuất xứ hàng hoá của Việt Nam - mẫu D để hưởng các ưu đãi theo \"Hiệp định về chương trình ưu đãi thuế quan có hiệu lực chung (CEPT) để thành lập Khu vực Mậu dịch Tự do ASEAN \" ban hành kèm theo Quyết định số 1420/2004/QĐ-BTM ngày 4 tháng 10 năm 2004 của Bộ trưởng Bộ Thương mại như sau:"}, {"id": "sp_ai_9", "label": "Điều", "start": 1831, "end": 1913, "text": "Điều 2. Quyết định này có hiệu lực thi hành sau 15 ngày, kể từ ngày đăng Công báo."}, {"id": "sp_ai_10", "label": "Điều", "start": 1914, "end": 2081, "text": "Điều 3. Vụ trưởng Vụ Xuất Nhập khẩu, Thủ trưởng các cơ quan, đơn vị thuộc Bộ Công Thương, các tổ chức, cá nhân có liên quan chịu trách nhiệm thi hành Quyết định này./."}, {"id": "sp_ai_11", "label": "Khoản", "start": 1711, "end": 1771, "text": "1. Ban Quản lý các Khu công nghiệp tỉnh Bình Phước, mã số 67"}, {"id": "sp_ai_12", "label": "Khoản", "start": 1772, "end": 1830, "text": "2. Ban Quản lý Khu Kinh tế cửa khẩu quốc tế Bờ Y, mã số 68"}, {"id": "sp_ai_13", "label": "Chức danh", "start": 2086, "end": 2095, "text": "BỘ TRƯỞNG"}, {"id": "sp_ai_14", "label": "Người ký", "start": 2115, "end": 2132, "text": "Nguyễn Thành Biên"}], "relations": [{"id": "rel_ai_1", "fromId": "sp_ai_1", "toId": "sp_ai_6", "type": "Căn cứ ban hành"}, {"id": "rel_ai_2", "fromId": "sp_ai_1", "toId": "sp_ai_7", "type": "Căn cứ ban hành"}]};
+    const SAMPLE_INITIAL_DOC = {"id": "doc_default_1", "fileName": "001_2007_QĐ-BCT_82272.docx", "text": "Quyết định số 001/2007/QĐ-BCT Về việc bổ sung Phụ lục 3 Quy chế cấp Giấy chứng nhận xuất xứ hàng hóa của Việt Nam-mẫu D để hưởng các ưu đãi theo “Hiệp định về chương trình ưu đãi thuế quan có hiệu lực chung (CEPT) để thành lập Khu vực Mậu dịch Tự do ASEAN” ban hành kèm theo Quyết định của Bộ trưởng Bộ Thương mại số 1420/2004/QĐ-BTM ngày 04 tháng 10 năm 2004\nBỘ CÔNG THƯƠNG.\nCỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM\nĐộc lập – Tự do – Hạnh phúc\nSố: 001/2007/QĐ-BCT\nHà Nội, ngày 27 tháng 8 năm 2007\nQUYẾT ĐỊNH\nVề việc bổ sung Phụ lục 3 Quy chế cấp Giấy chứng nhận xuất xứ hàng\nhóa của Việt Nam-mẫu D để hưởng các ưu đãi theo “Hiệp định về\nchương trình ưu đãi thuế quan có hiệu lực chung (CEPT) để thành lập\nKhu vực Mậu dịch Tự do ASEAN” ban hành kèm theo Quyết định của\nBộ trưởng Bộ Thương mại số 1420/2004/QĐ-BTM ngày 04 tháng 10\nnăm 2004\n_____________________________________________\nBỘ TRƯỞNG BỘ CÔNG THƯƠNG\nCăn cứ Nghị quyết số 01/2007/QH12 ngày 31 tháng 7 năm 2007 của Quốc hội nước Cộng hoà Xã hội Chủ nghĩa Việt Nam khoá XII, kỳ họp thứ nhất về cơ cấu tổ chức của Chính phủ và số Phó Thủ tướng Chính phủ nhiệm kỳ khoá XII;\nCăn cứ Nghị định số 86/2002/NĐ-CP ngày 05 tháng 11 năm 2002 của Chính phủ quy định chức năng, nhiệm vụ, quyền hạn và cơ cấu tổ chức của Bộ, cơ quan ngang Bộ;\nTheo đề nghị của Vụ trưởng Vụ Xuất Nhập khẩu,\nQUYẾT ĐỊNH:\nĐiều 1. Bổ sung tên và mã số tại nhóm 4 Điều 1 Phụ lục 3 Quy chế cấp Giấy chứng nhận xuất xứ hàng hoá của Việt Nam - mẫu D để hưởng các ưu đãi theo \"Hiệp định về chương trình ưu đãi thuế quan có hiệu lực chung (CEPT) để thành lập Khu vực Mậu dịch Tự do ASEAN \" ban hành kèm theo Quyết định số 1420/2004/QĐ-BTM ngày 4 tháng 10 năm 2004 của Bộ trưởng Bộ Thương mại như sau:\n1. Ban Quản lý các Khu công nghiệp tỉnh Bình Phước, mã số 67\n2. Ban Quản lý Khu Kinh tế cửa khẩu quốc tế Bờ Y, mã số 68\nĐiều 2. Quyết định này có hiệu lực thi hành sau 15 ngày, kể từ ngày đăng Công báo.\nĐiều 3. Vụ trưởng Vụ Xuất Nhập khẩu, Thủ trưởng các cơ quan, đơn vị thuộc Bộ Công Thương, các tổ chức, cá nhân có liên quan chịu trách nhiệm thi hành Quyết định này./.\nKT. BỘ TRƯỞNG\nTHỨ TRƯỞNG\n(Đã ký)\nNguyễn Thành Biên", "blocks": [{"type": "p", "text": "Quyết định số 001/2007/QĐ-BCT Về việc bổ sung Phụ lục 3 Quy chế cấp Giấy chứng nhận xuất xứ hàng hóa của Việt Nam-mẫu D để hưởng các ưu đãi theo “Hiệp định về chương trình ưu đãi thuế quan có hiệu lực chung (CEPT) để thành lập Khu vực Mậu dịch Tự do ASEAN” ban hành kèm theo Quyết định của Bộ trưởng Bộ Thương mại số 1420/2004/QĐ-BTM ngày 04 tháng 10 năm 2004", "align": "left", "bold": false, "italic": false, "style": "Heading1", "indent": 0, "start": 0, "end": 359}, {"type": "tbl", "bordered": false, "rows": [[{"colspan": 1, "paras": [{"text": "BỘ CÔNG THƯƠNG.", "align": "center", "bold": false, "italic": false, "style": null, "indent": 0, "start": 360, "end": 375}]}, {"colspan": 1, "paras": [{"text": "CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM", "align": "center", "bold": false, "italic": false, "style": null, "indent": 0, "start": 376, "end": 410}, {"text": "Độc lập – Tự do – Hạnh phúc", "align": "center", "bold": false, "italic": false, "style": null, "indent": 0, "start": 411, "end": 438}]}]]}, {"type": "tbl", "bordered": false, "rows": [[{"colspan": 1, "paras": [{"text": "Số: 001/2007/QĐ-BCT", "align": "center", "bold": false, "italic": false, "style": null, "indent": 0, "start": 439, "end": 458}]}, {"colspan": 1, "paras": [{"text": "Hà Nội, ngày 27 tháng 8 năm 2007", "align": "center", "bold": false, "italic": false, "style": null, "indent": 0, "start": 459, "end": 491}]}]]}, {"type": "p", "text": "QUYẾT ĐỊNH", "align": "center", "bold": true, "italic": false, "style": null, "indent": 0, "start": 492, "end": 502}, {"type": "p", "text": "Về việc bổ sung Phụ lục 3 Quy chế cấp Giấy chứng nhận xuất xứ hàng", "align": "center", "bold": true, "italic": false, "style": null, "indent": 0, "start": 503, "end": 569}, {"type": "p", "text": "hóa của Việt Nam-mẫu D để hưởng các ưu đãi theo “Hiệp định về", "align": "center", "bold": true, "italic": false, "style": null, "indent": 0, "start": 570, "end": 631}, {"type": "p", "text": "chương trình ưu đãi thuế quan có hiệu lực chung (CEPT) để thành lập", "align": "center", "bold": true, "italic": false, "style": null, "indent": 0, "start": 632, "end": 699}, {"type": "p", "text": "Khu vực Mậu dịch Tự do ASEAN” ban hành kèm theo Quyết định của", "align": "center", "bold": true, "italic": false, "style": null, "indent": 0, "start": 700, "end": 762}, {"type": "p", "text": "Bộ trưởng Bộ Thương mại số 1420/2004/QĐ-BTM ngày 04 tháng 10", "align": "center", "bold": true, "italic": false, "style": null, "indent": 0, "start": 763, "end": 823}, {"type": "p", "text": "năm 2004", "align": "center", "bold": true, "italic": false, "style": null, "indent": 0, "start": 824, "end": 832}, {"type": "p", "text": "_____________________________________________", "align": "center", "bold": false, "italic": false, "style": null, "indent": 0, "start": 833, "end": 878}, {"type": "p", "text": "BỘ TRƯỞNG BỘ CÔNG THƯƠNG", "align": "center", "bold": true, "italic": false, "style": null, "indent": 0, "start": 879, "end": 903}, {"type": "p", "text": "Căn cứ Nghị quyết số 01/2007/QH12 ngày 31 tháng 7 năm 2007 của Quốc hội nước Cộng hoà Xã hội Chủ nghĩa Việt Nam khoá XII, kỳ họp thứ nhất về cơ cấu tổ chức của Chính phủ và số Phó Thủ tướng Chính phủ nhiệm kỳ khoá XII;", "align": "justify", "bold": false, "italic": true, "style": null, "indent": 0, "start": 904, "end": 1122}, {"type": "p", "text": "Căn cứ Nghị định số 86/2002/NĐ-CP ngày 05 tháng 11 năm 2002 của Chính phủ quy định chức năng, nhiệm vụ, quyền hạn và cơ cấu tổ chức của Bộ, cơ quan ngang Bộ;", "align": "justify", "bold": false, "italic": true, "style": null, "indent": 0, "start": 1123, "end": 1280}, {"type": "p", "text": "Theo đề nghị của Vụ trưởng Vụ Xuất Nhập khẩu,", "align": "left", "bold": false, "italic": true, "style": null, "indent": 0, "start": 1281, "end": 1326}, {"type": "p", "text": "QUYẾT ĐỊNH:", "align": "center", "bold": true, "italic": false, "style": null, "indent": 0, "start": 1327, "end": 1338}, {"type": "p", "text": "Điều 1. Bổ sung tên và mã số tại nhóm 4 Điều 1 Phụ lục 3 Quy chế cấp Giấy chứng nhận xuất xứ hàng hoá của Việt Nam - mẫu D để hưởng các ưu đãi theo \"Hiệp định về chương trình ưu đãi thuế quan có hiệu lực chung (CEPT) để thành lập Khu vực Mậu dịch Tự do ASEAN \" ban hành kèm theo Quyết định số 1420/2004/QĐ-BTM ngày 4 tháng 10 năm 2004 của Bộ trưởng Bộ Thương mại như sau:", "align": "justify", "bold": false, "italic": false, "style": null, "indent": 0, "start": 1339, "end": 1710}, {"type": "p", "text": "1. Ban Quản lý các Khu công nghiệp tỉnh Bình Phước, mã số 67", "align": "left", "bold": false, "italic": false, "style": null, "indent": 0, "start": 1711, "end": 1771}, {"type": "p", "text": "2. Ban Quản lý Khu Kinh tế cửa khẩu quốc tế Bờ Y, mã số 68", "align": "left", "bold": false, "italic": false, "style": null, "indent": 0, "start": 1772, "end": 1830}, {"type": "p", "text": "Điều 2. Quyết định này có hiệu lực thi hành sau 15 ngày, kể từ ngày đăng Công báo.", "align": "left", "bold": false, "italic": false, "style": null, "indent": 0, "start": 1831, "end": 1913}, {"type": "p", "text": "Điều 3. Vụ trưởng Vụ Xuất Nhập khẩu, Thủ trưởng các cơ quan, đơn vị thuộc Bộ Công Thương, các tổ chức, cá nhân có liên quan chịu trách nhiệm thi hành Quyết định này./.", "align": "justify", "bold": false, "italic": false, "style": null, "indent": 0, "start": 1914, "end": 2081}, {"type": "p", "text": "KT. BỘ TRƯỞNG", "align": "right", "bold": true, "italic": false, "style": null, "indent": 0, "start": 2082, "end": 2095}, {"type": "p", "text": "THỨ TRƯỞNG", "align": "right", "bold": true, "italic": false, "style": null, "indent": 0, "start": 2096, "end": 2106}, {"type": "p", "text": "(Đã ký)", "align": "right", "bold": true, "italic": false, "style": null, "indent": 0, "start": 2107, "end": 2114}, {"type": "p", "text": "Nguyễn Thành Biên", "align": "right", "bold": true, "italic": false, "style": null, "indent": 0, "start": 2115, "end": 2132}], "annotations": [{"id": "sp_ai_1", "label": "Số hiệu", "start": 443, "end": 458, "text": "001/2007/QĐ-BCT"}, {"id": "sp_ai_2", "label": "Cơ quan ban hành", "start": 360, "end": 374, "text": "BỘ CÔNG THƯƠNG"}, {"id": "sp_ai_3", "label": "Ngày ban hành", "start": 467, "end": 491, "text": "ngày 27 tháng 8 năm 2007"}, {"id": "sp_ai_4", "label": "Loại văn bản", "start": 492, "end": 502, "text": "QUYẾT ĐỊNH"}, {"id": "sp_ai_5", "label": "Tên văn bản", "start": 503, "end": 832, "text": "Về việc bổ sung Phụ lục 3 Quy chế cấp Giấy chứng nhận xuất xứ hàng\nhóa của Việt Nam-mẫu D để hưởng các ưu đãi theo “Hiệp định về\nchương trình ưu đãi thuế quan có hiệu lực chung (CEPT) để thành lập\nKhu vực Mậu dịch Tự do ASEAN” ban hành kèm theo Quyết định của\nBộ trưởng Bộ Thương mại số 1420/2004/QĐ-BTM ngày 04 tháng 10\nnăm 2004"}, {"id": "sp_ai_6", "label": "Căn cứ ban hành", "start": 911, "end": 1121, "text": "Nghị quyết số 01/2007/QH12 ngày 31 tháng 7 năm 2007 của Quốc hội nước Cộng hoà Xã hội Chủ nghĩa Việt Nam khoá XII, kỳ họp thứ nhất về cơ cấu tổ chức của Chính phủ và số Phó Thủ tướng Chính phủ nhiệm kỳ khoá XII"}, {"id": "sp_ai_7", "label": "Căn cứ ban hành", "start": 1130, "end": 1279, "text": "Nghị định số 86/2002/NĐ-CP ngày 05 tháng 11 năm 2002 của Chính phủ quy định chức năng, nhiệm vụ, quyền hạn và cơ cấu tổ chức của Bộ, cơ quan ngang Bộ"}, {"id": "sp_ai_8", "label": "Điều", "start": 1339, "end": 1710, "text": "Điều 1. Bổ sung tên và mã số tại nhóm 4 Điều 1 Phụ lục 3 Quy chế cấp Giấy chứng nhận xuất xứ hàng hoá của Việt Nam - mẫu D để hưởng các ưu đãi theo \"Hiệp định về chương trình ưu đãi thuế quan có hiệu lực chung (CEPT) để thành lập Khu vực Mậu dịch Tự do ASEAN \" ban hành kèm theo Quyết định số 1420/2004/QĐ-BTM ngày 4 tháng 10 năm 2004 của Bộ trưởng Bộ Thương mại như sau:"}, {"id": "sp_ai_9", "label": "Điều", "start": 1831, "end": 1913, "text": "Điều 2. Quyết định này có hiệu lực thi hành sau 15 ngày, kể từ ngày đăng Công báo."}, {"id": "sp_ai_10", "label": "Điều", "start": 1914, "end": 2081, "text": "Điều 3. Vụ trưởng Vụ Xuất Nhập khẩu, Thủ trưởng các cơ quan, đơn vị thuộc Bộ Công Thương, các tổ chức, cá nhân có liên quan chịu trách nhiệm thi hành Quyết định này./."}, {"id": "sp_ai_11", "label": "Khoản", "start": 1711, "end": 1771, "text": "1. Ban Quản lý các Khu công nghiệp tỉnh Bình Phước, mã số 67"}, {"id": "sp_ai_12", "label": "Khoản", "start": 1772, "end": 1830, "text": "2. Ban Quản lý Khu Kinh tế cửa khẩu quốc tế Bờ Y, mã số 68"}, {"id": "sp_ai_13", "label": "Chức danh", "start": 2086, "end": 2095, "text": "BỘ TRƯỞNG"}, {"id": "sp_ai_14", "label": "Người ký", "start": 2115, "end": 2132, "text": "Nguyễn Thành Biên"}], "relations": [{"id": "rel_ai_1", "fromId": "sp_ai_1", "toId": "sp_ai_6", "type": "Căn cứ ban hành"}, {"id": "rel_ai_2", "fromId": "sp_ai_1", "toId": "sp_ai_7", "type": "Căn cứ ban hành"}, {"id": "rel_ai_3", "fromId": "sp_ai_11", "toId": "sp_ai_8", "type": "Thuộc"}, {"id": "rel_ai_4", "fromId": "sp_ai_12", "toId": "sp_ai_8", "type": "Thuộc"}]};
 
     /*************************************************************************
      * 2. STATE MANAGEMENT
@@ -1856,8 +1878,14 @@
       activeJsonSectionTab: 'all',
       showOnDocRelations: false,
       highlightedRelId: null,
-      pendingDuplicateDoc: null
+      pendingDuplicateDoc: null,
+      popoverManualPos: null,
+      draggingPopover: null
     };
+
+    if (!localStorage.getItem('legal_label_xml_v1') && !state.relationTypes.includes('Thuộc')) {
+      state.relationTypes.unshift('Thuộc');
+    }
 
     function sanitizeLoadedDocs() {
       state.documents.forEach(doc => {
@@ -1876,6 +1904,105 @@
           }
         });
       });
+    }
+
+    // Structural hierarchy ranking:
+    // Phần (<-Thuộc) Chương (<-Thuộc) Mục (<-Thuộc) Tiểu Mục (<-Thuộc) Điều (<-Thuộc) Khoản (<-Thuộc) Điểm
+    const TOC_HIERARCHY_RANK = {
+      'phần': 0,
+      'phan': 0,
+      'chương': 1,
+      'chuong': 1,
+      'mục': 2,
+      'muc': 2,
+      'tiểu mục': 3,
+      'tieu muc': 3,
+      'tiểu_mục': 3,
+      'điều': 4,
+      'dieu': 4,
+      'khoản': 5,
+      'khoan': 5,
+      'điểm': 6,
+      'diem': 6
+    };
+
+    function getTocStructuralRank(labelName) {
+      const k = String(labelName || '').normalize('NFC').trim().toLowerCase();
+      return Object.prototype.hasOwnProperty.call(TOC_HIERARCHY_RANK, k)
+        ? TOC_HIERARCHY_RANK[k]
+        : -1;
+    }
+
+    /**
+     * Auto-assign "Thuộc" relations between TOC structural entities based on document position:
+     * Phần <- Chương <- Mục <- Tiểu Mục <- Điều <- Khoản <- Điểm
+     * Direction: child (fromId) --[Thuộc]--> parent (toId)
+     */
+    function autoLinkStructuralHierarchyRelations(doc, targetSpanIds = null) {
+      if (!doc || !Array.isArray(doc.annotations)) return 0;
+
+      const structAnns = doc.annotations
+        .filter(a => getTocStructuralRank(a.label) !== -1)
+        .sort((a, b) => a.start - b.start || a.end - b.end);
+
+      if (structAnns.length === 0) return 0;
+
+      if (!state.relationTypes.includes('Thuộc')) {
+        state.relationTypes.unshift('Thuộc');
+      }
+
+      const activeAncestors = {};
+      let addedCount = 0;
+
+      structAnns.forEach(ann => {
+        const rank = getTocStructuralRank(ann.label);
+
+        // Reset active ancestors at current rank or deeper
+        for (let r = rank; r <= 6; r++) {
+          delete activeAncestors[r];
+        }
+        activeAncestors[rank] = ann;
+
+        let parentAnn = null;
+        for (let pr = rank - 1; pr >= 0; pr--) {
+          if (activeAncestors[pr]) {
+            parentAnn = activeAncestors[pr];
+            break;
+          }
+        }
+
+        if (!parentAnn) return;
+
+        if (targetSpanIds && !targetSpanIds.has(ann.id) && !targetSpanIds.has(parentAnn.id)) {
+          return;
+        }
+
+        // Remove stale structural "Thuộc" relation from ann pointing to a different structural ancestor
+        doc.relations = doc.relations.filter(r => {
+          if (r.fromId === ann.id && r.type === 'Thuộc') {
+            const target = doc.annotations.find(x => x.id === r.toId);
+            if (target && getTocStructuralRank(target.label) !== -1 && r.toId !== parentAnn.id) {
+              return false;
+            }
+          }
+          return true;
+        });
+
+        const alreadyExists = doc.relations.some(
+          r => r.fromId === ann.id && r.toId === parentAnn.id && r.type === 'Thuộc'
+        );
+        if (!alreadyExists) {
+          doc.relations.push({
+            id: 'rel_thuoc_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
+            fromId: ann.id,
+            toId: parentAnn.id,
+            type: 'Thuộc'
+          });
+          addedCount++;
+        }
+      });
+
+      return addedCount;
     }
 
     function buildBlocksFromPlainText(text) {
@@ -2417,29 +2544,129 @@
       }
     }
 
+    function handleDocScroll() {
+      drawRelationLinesOnDoc();
+      if (state.selectedSpanId && !state.popoverManualPos) {
+        positionSpanActionPopover(state.selectedSpanId);
+      }
+    }
+
     /**
-     * Draw Visual SVG Curved Connectors Between Linked Entities Directly on the Document Paper
+     * Draw Visual SVG Orthogonal Left-Margin Hook Connectors Between Linked Entities
+     * - Automatically reveals connected relations when clicking an entity that has relations
+     * - Hooks out to the left gutter, runs vertically along non-overlapping lanes, and hooks back in
+     *   so the document body remains unobstructed
      */
     function drawRelationLinesOnDoc() {
       const svg = document.getElementById('relationSvgOverlay');
       const paper = document.getElementById('docPaper');
-      if (!svg || !paper) return;
+      const contentEl = document.getElementById('docContent');
+      if (!svg || !paper || !contentEl) return;
 
       const doc = getCurrentDoc();
-      if (!state.showOnDocRelations || doc.relations.length === 0) {
+      if (!doc.relations || doc.relations.length === 0) {
+        svg.innerHTML = '';
+        return;
+      }
+
+      const selectedId = state.selectedSpanId;
+      const hiId = state.highlightedRelId;
+      const hasSelectedRels = Boolean(
+        selectedId && doc.relations.some(r => r.fromId === selectedId || r.toId === selectedId)
+      );
+
+      let relsToDraw = [];
+      if (state.showOnDocRelations) {
+        relsToDraw = doc.relations;
+      } else if (hasSelectedRels) {
+        relsToDraw = doc.relations.filter(r => r.fromId === selectedId || r.toId === selectedId);
+      } else if (hiId) {
+        relsToDraw = doc.relations.filter(r => r.id === hiId);
+      }
+
+      if (relsToDraw.length === 0) {
         svg.innerHTML = '';
         return;
       }
 
       const paperRect = paper.getBoundingClientRect();
+      const contentRect = contentEl.getBoundingClientRect();
+      const contentLeft = Math.max(60, contentRect.left - paperRect.left);
+
       svg.setAttribute('width', paper.scrollWidth);
       svg.setAttribute('height', paper.scrollHeight);
 
       const { idMap } = getEntityIdMap(doc);
+
+      const getFirstLineRect = (el) => {
+        if (el.getClientRects) {
+          const rects = el.getClientRects();
+          for (let i = 0; i < rects.length; i++) {
+            if (rects[i].width > 1 && rects[i].height > 1) return rects[i];
+          }
+        }
+        return el.getBoundingClientRect();
+      };
+
+      const items = [];
+      relsToDraw.forEach(r => {
+        const fromEl = document.querySelector(`.annotated-span[data-span-id="${r.fromId}"]`);
+        const toEl = document.querySelector(`.annotated-span[data-span-id="${r.toId}"]`);
+        if (!fromEl || !toEl) return;
+
+        const r1 = getFirstLineRect(fromEl);
+        const r2 = getFirstLineRect(toEl);
+
+        const x1 = r1.left - paperRect.left;
+        const y1Mid = r1.top - paperRect.top + r1.height / 2;
+        const y1Bottom = r1.bottom - paperRect.top + 3;
+
+        const x2 = r2.left - paperRect.left;
+        const y2Mid = r2.top - paperRect.top + r2.height / 2;
+        const y2Top = r2.top - paperRect.top - 3;
+        const y2Bottom = r2.bottom - paperRect.top + 3;
+
+        items.push({ r, x1, y1Mid, y1Bottom, x2, y2Mid, y2Top, y2Bottom, spanH: Math.abs(y2Mid - y1Mid) });
+      });
+
+      if (items.length === 0) {
+        svg.innerHTML = '';
+        return;
+      }
+
+      // Shorter spans allocate inner lanes closest to text; longer spans nest cleanly outside
+      items.sort((a, b) => a.spanH - b.spanH);
+
+      const maxGutterX = Math.max(38, contentLeft - 14);
+      const minGutterX = 14;
+      const laneStep = 14;
+      const laneIntervals = [];
+
+      const allocLaneX = (yA, yB) => {
+        const topY = Math.min(yA, yB) - 4;
+        const botY = Math.max(yA, yB) + 4;
+        let laneIdx = 0;
+        while (laneIdx < laneIntervals.length) {
+          const overlaps = laneIntervals[laneIdx].some(([a, b]) => !(botY < a || topY > b));
+          if (!overlaps) break;
+          laneIdx++;
+        }
+        if (!laneIntervals[laneIdx]) laneIntervals[laneIdx] = [];
+        laneIntervals[laneIdx].push([topY, botY]);
+
+        const gutterWidth = Math.max(20, maxGutterX - minGutterX);
+        const maxLanes = Math.max(1, Math.floor(gutterWidth / laneStep) + 1);
+        const effIdx = laneIdx % maxLanes;
+        return maxGutterX - effIdx * laneStep;
+      };
+
       let pathsHtml = `
         <defs>
-          <marker id="relArrow" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
-            <path d="M0,0 L8,4 L0,8 Z" fill="#6366f1" />
+          <marker id="relArrowNormal" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
+            <path d="M0,0 L7,3.5 L0,7 Z" fill="#4f46e5" />
+          </marker>
+          <marker id="relArrowSelected" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+            <path d="M0,0 L8,4 L0,8 Z" fill="#2563eb" />
           </marker>
           <marker id="relArrowActive" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
             <path d="M0,0 L9,4.5 L0,9 Z" fill="#dc2626" />
@@ -2447,44 +2674,103 @@
         </defs>
       `;
 
-      doc.relations.forEach((r, idx) => {
-        const fromEl = document.querySelector(`.annotated-span[data-span-id="${r.fromId}"]`);
-        const toEl = document.querySelector(`.annotated-span[data-span-id="${r.toId}"]`);
-        if (!fromEl || !toEl) return;
+      const occupiedPillY = [];
+      const resolvePillY = (desiredY) => {
+        let y = desiredY;
+        let guard = 0;
+        while (occupiedPillY.some(oy => Math.abs(oy - y) < 20) && guard < 15) {
+          y += (guard % 2 === 0 ? 20 : -20);
+          guard++;
+        }
+        occupiedPillY.push(y);
+        return y;
+      };
 
-        const r1 = fromEl.getBoundingClientRect();
-        const r2 = toEl.getBoundingClientRect();
-
-        const x1 = r1.left - paperRect.left + r1.width / 2;
-        const y1 = r1.top - paperRect.top;
-        const x2 = r2.left - paperRect.left + r2.width / 2;
-        const y2 = r2.top - paperRect.top;
-
+      items.forEach(item => {
+        const { r, x1, y1Mid, y1Bottom, x2, y2Mid, y2Top, y2Bottom } = item;
         const isHi = state.highlightedRelId === r.id;
-        const strokeColor = isHi ? '#dc2626' : '#6366f1';
-        const strokeWidth = isHi ? 2.6 : 1.6;
-        const opacity = isHi ? 1.0 : 0.65;
+        const isRelToSelected = selectedId && (r.fromId === selectedId || r.toId === selectedId);
 
-        const midX = (x1 + x2) / 2;
-        const arcLift = Math.min(70, Math.max(24, Math.abs(y2 - y1) * 0.15 + 22));
-        const ctrlY = Math.min(y1, y2) - arcLift;
+        const strokeColor = isHi ? '#dc2626' : (isRelToSelected ? '#2563eb' : '#6366f1');
+        const markerId = isHi ? 'relArrowActive' : (isRelToSelected ? 'relArrowSelected' : 'relArrowNormal');
+        const strokeWidth = isHi ? 2.5 : (isRelToSelected ? 2.1 : 1.45);
+        const opacity = isHi || isRelToSelected ? 0.96 : (hasSelectedRels ? 0.22 : 0.65);
+
+        const xLane = allocLaneX(y1Mid, y2Mid);
+        const radius = 7;
+        const goingUp = y2Mid < y1Mid;
+
+        const srcIndented = x1 > contentLeft + 26;
+        const tgtIndented = x2 > contentLeft + 26;
+
+        let pathD = '';
+        if (Math.abs(y2Mid - y1Mid) < 8) {
+          const dirY = -12;
+          const xStartHook = Math.max(minGutterX, xLane);
+          pathD = `M ${x1} ${y1Mid} L ${xStartHook} ${y1Mid} L ${xStartHook} ${y1Mid + dirY} L ${x2 - 8} ${y1Mid + dirY} L ${x2 - 3} ${y2Mid}`;
+        } else {
+          const yStart = srcIndented ? y1Bottom : y1Mid;
+          const yEnd = tgtIndented ? (goingUp ? y2Bottom : y2Top) : y2Mid;
+          const dir = (yEnd < yStart) ? -1 : 1;
+          const rCurve = Math.min(radius, Math.abs(yEnd - yStart) / 2.5);
+
+          if (srcIndented) {
+            pathD = `M ${x1 + 2} ${y1Mid} L ${x1 + 2} ${yStart} L ${xLane + rCurve} ${yStart}`;
+          } else {
+            pathD = `M ${x1} ${yStart} L ${xLane + rCurve} ${yStart}`;
+          }
+
+          pathD += ` Q ${xLane} ${yStart}, ${xLane} ${yStart + dir * rCurve}`;
+          pathD += ` L ${xLane} ${yEnd - dir * rCurve}`;
+          pathD += ` Q ${xLane} ${yEnd}, ${xLane + rCurve} ${yEnd}`;
+
+          if (tgtIndented) {
+            pathD += ` L ${x2 - 4} ${yEnd} L ${x2 - 2} ${y2Mid}`;
+          } else {
+            pathD += ` L ${x2 - 3} ${y2Mid}`;
+          }
+        }
 
         const fromEid = idMap[r.fromId] || '';
         const toEid = idMap[r.toId] || '';
+        const fullTitle = `${fromEid} ➔ ${toEid}: ${r.type}`;
 
         pathsHtml += `
-          <path d="M ${x1} ${y1} Q ${midX} ${ctrlY} ${x2} ${y2}"
-                fill="none"
-                stroke="${strokeColor}"
-                stroke-width="${strokeWidth}"
-                stroke-dasharray="${isHi ? 'none' : '5,3'}"
-                opacity="${opacity}"
-                marker-end="url(#${isHi ? 'relArrowActive' : 'relArrow'})" />
-          <rect x="${midX - 58}" y="${(y1 + y2) / 2 - 22}" width="116" height="18" rx="4" fill="${strokeColor}" opacity="${opacity}" />
-          <text x="${midX}" y="${(y1 + y2) / 2 - 10}" text-anchor="middle" fill="#fff" font-size="10" font-family="Segoe UI" font-weight="700">
-            ${escapeHtml(fromEid)}➔${escapeHtml(toEid)}: ${escapeHtml(truncate(r.type, 14))}
-          </text>
+          <g opacity="${opacity}">
+            <path d="${pathD}"
+                  fill="none"
+                  stroke="${strokeColor}"
+                  stroke-width="${strokeWidth}"
+                  stroke-dasharray="${(isHi || isRelToSelected) ? 'none' : '4,3'}"
+                  stroke-linejoin="round"
+                  stroke-linecap="round"
+                  marker-end="url(#${markerId})">
+              <title>${escapeHtml(fullTitle)}</title>
+            </path>
+            <circle cx="${x1}" cy="${y1Mid}" r="3" fill="${strokeColor}" />
         `;
+
+        const showLabelPill = isHi || isRelToSelected || items.length <= 10;
+        if (showLabelPill) {
+          const shortType = truncate(r.type, 13);
+          const pillW = Math.min(contentLeft - 12, Math.max(46, shortType.length * 6.2 + 14));
+          const pillX = Math.max(4, Math.min(xLane - pillW / 2, contentLeft - pillW - 6));
+          const pillY = resolvePillY((y1Mid + y2Mid) / 2);
+
+          pathsHtml += `
+            <rect x="${pillX}" y="${pillY - 9}" width="${pillW}" height="18" rx="4"
+                  fill="${strokeColor}" stroke="#ffffff" stroke-width="1">
+              <title>${escapeHtml(fullTitle)}</title>
+            </rect>
+            <text x="${pillX + pillW / 2}" y="${pillY + 3.5}" text-anchor="middle"
+                  fill="#ffffff" font-size="10" font-family="Segoe UI, sans-serif" font-weight="700">
+              ${escapeHtml(shortType)}
+              <title>${escapeHtml(fullTitle)}</title>
+            </text>
+          `;
+        }
+
+        pathsHtml += `</g>`;
       });
 
       svg.innerHTML = pathsHtml;
@@ -2570,11 +2856,39 @@
       if (popover) popover.classList.remove('visible');
     }
 
+    function startDragSpanPopover(event) {
+      if (event.target.closest('button')) return;
+      event.preventDefault();
+      event.stopPropagation();
+
+      const popover = document.getElementById('spanActionPopover');
+      if (!popover) return;
+      const rect = popover.getBoundingClientRect();
+      state.draggingPopover = {
+        offsetX: event.clientX - rect.left,
+        offsetY: event.clientY - rect.top,
+        width: rect.width || popover.offsetWidth || 240,
+        height: rect.height || popover.offsetHeight || 38
+      };
+      popover.classList.add('dragging');
+    }
+
     function positionSpanActionPopover(spanId) {
       const popover = document.getElementById('spanActionPopover');
       if (!popover) return;
       if (!spanId || state.selectedSpanId !== spanId) {
         popover.classList.remove('visible');
+        return;
+      }
+
+      if (state.popoverManualPos) {
+        popover.classList.add('visible');
+        const popW = popover.offsetWidth || 240;
+        const popH = popover.offsetHeight || 38;
+        const left = Math.max(8, Math.min(state.popoverManualPos.left, window.innerWidth - popW - 8));
+        const top = Math.max(8, Math.min(state.popoverManualPos.top, window.innerHeight - popH - 8));
+        popover.style.left = `${left}px`;
+        popover.style.top = `${top}px`;
         return;
       }
 
@@ -2595,7 +2909,7 @@
       }
 
       popover.classList.add('visible');
-      const popW = popover.offsetWidth || 230;
+      const popW = popover.offsetWidth || 240;
       const popH = popover.offsetHeight || 38;
 
       let top = rect.top - popH - 8;
@@ -3030,6 +3344,19 @@
     }
 
     window.addEventListener('mousemove', (e) => {
+      if (state.draggingPopover) {
+        const popover = document.getElementById('spanActionPopover');
+        if (popover) {
+          const { offsetX, offsetY, width, height } = state.draggingPopover;
+          const newLeft = Math.max(8, Math.min(e.clientX - offsetX, window.innerWidth - width - 8));
+          const newTop = Math.max(8, Math.min(e.clientY - offsetY, window.innerHeight - height - 8));
+          popover.style.left = `${newLeft}px`;
+          popover.style.top = `${newTop}px`;
+          state.popoverManualPos = { left: newLeft, top: newTop };
+        }
+        return;
+      }
+
       if (!state.resizingSpanId) return;
       const newOffset = getDocOffsetFromPoint(e.clientX, e.clientY);
       if (newOffset === null) return;
@@ -3060,6 +3387,10 @@
     });
 
     window.addEventListener('mouseup', () => {
+      if (state.draggingPopover) {
+        document.getElementById('spanActionPopover')?.classList.remove('dragging');
+        state.draggingPopover = null;
+      }
       if (state.resizingSpanId) {
         state.resizingSpanId = null;
         state.resizingSide = null;
@@ -3095,6 +3426,31 @@
         const oldLabel = span.label;
         span.label = newLabelName;
         state.activeLabel = newLabelName;
+
+        const oldRank = getTocStructuralRank(oldLabel);
+        const newRank = getTocStructuralRank(newLabelName);
+        if (oldRank !== newRank) {
+          doc.relations = doc.relations.filter(r => {
+            if (r.type === 'Thuộc' && r.fromId === span.id) {
+              const tgt = doc.annotations.find(x => x.id === r.toId);
+              if (tgt && getTocStructuralRank(tgt.label) !== -1) return false;
+            }
+            return true;
+          });
+          if (newRank !== -1) {
+            autoLinkStructuralHierarchyRelations(doc, new Set([span.id]));
+          } else if (oldRank !== -1) {
+            doc.relations = doc.relations.filter(r => {
+              if (r.type === 'Thuộc' && r.toId === span.id) {
+                const src = doc.annotations.find(x => x.id === r.fromId);
+                if (src && getTocStructuralRank(src.label) !== -1) return false;
+              }
+              return true;
+            });
+            autoLinkStructuralHierarchyRelations(doc);
+          }
+        }
+
         renderAll();
         const { idMap } = getEntityIdMap(doc);
         const eid = idMap[span.id] || span.id;
@@ -3105,6 +3461,7 @@
 
     function deselectSpan() {
       state.selectedSpanId = null;
+      state.popoverManualPos = null;
       hideSpanActionPopover();
       renderAll();
     }
@@ -3512,6 +3869,9 @@
         text
       };
       doc.annotations.push(newAnn);
+      if (getTocStructuralRank(labelName) !== -1) {
+        autoLinkStructuralHierarchyRelations(doc, new Set([newAnn.id]));
+      }
       state.selectedSpanId = newAnn.id;
       renderAll();
     }
@@ -3521,7 +3881,10 @@
       const doc = getCurrentDoc();
       doc.annotations = doc.annotations.filter(a => a.id !== spanId);
       doc.relations = doc.relations.filter(r => r.fromId !== spanId && r.toId !== spanId);
-      if (state.selectedSpanId === spanId) state.selectedSpanId = null;
+      if (state.selectedSpanId === spanId) {
+        state.selectedSpanId = null;
+        state.popoverManualPos = null;
+      }
       if (state.relationSourceSpanId === spanId) state.relationSourceSpanId = null;
       renderAll();
     }
@@ -3532,6 +3895,7 @@
       doc.annotations = [];
       doc.relations = [];
       state.selectedSpanId = null;
+      state.popoverManualPos = null;
       state.relationSourceSpanId = null;
       renderAll();
     }
@@ -3548,7 +3912,12 @@
         openChooseRelationModal(state.relationSourceSpanId, spanId);
         return;
       }
-      state.selectedSpanId = (state.selectedSpanId === spanId) ? null : spanId;
+      if (state.selectedSpanId === spanId) {
+        state.selectedSpanId = null;
+        state.popoverManualPos = null;
+      } else {
+        state.selectedSpanId = spanId;
+      }
       renderAll();
     }
 
@@ -3651,63 +4020,309 @@
     }
 
     /*************************************************************************
-     * 11. STREAMLINED OUTPUT (CÓ NHÓM ENTITIES HOẶC RELATION, KÈM ID)
+     * 11. STREAMLINED OUTPUT (SCHEMA v1.0: metadata, structural_units, entities, relations)
      *************************************************************************/
+    const SPECIAL_CODE_MAP = {
+      'quy định về việc hết hiệu lực một phần': 'QUY_DINH_HET_HIEU_LUC_MOT_PHAN',
+      'quy định về việc hết hiệu lực toàn bộ': 'QUY_DINH_HET_HIEU_LUC_TOAN_BO',
+      'văn bản quy định về việc hết hiệu lực một phần': 'VB_QUY_DINH_HET_HIEU_LUC_MOT_PHAN',
+      'văn bản quy định về việc hết hiệu lực toàn bộ': 'VB_QUY_DINH_HET_HIEU_LUC_TOAN_BO',
+      'chức danh người ký': 'CHUC_DANH',
+      'thuộc': 'THUOC'
+    };
+
+    function toUpperSnakeCode(str) {
+      const s = String(str || '').normalize('NFC').trim();
+      if (!s) return 'UNKNOWN';
+      const lower = s.toLowerCase();
+      if (SPECIAL_CODE_MAP[lower]) return SPECIAL_CODE_MAP[lower];
+
+      let ascii = s
+        .replace(/Đ/g, 'D')
+        .replace(/đ/g, 'd')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '');
+
+      ascii = ascii.replace(/^Van ban\s+/i, 'VB_');
+
+      return ascii
+        .toUpperCase()
+        .replace(/[^A-Z0-9]+/g, '_')
+        .replace(/^_+|_+$/g, '') || 'UNKNOWN';
+    }
+
+    function getEntityScope(labelName) {
+      if (getTocStructuralRank(labelName) !== -1) return 'structure';
+      const lblObj = (state.labels || []).find(
+        l => l.name.toLowerCase() === String(labelName || '').trim().toLowerCase()
+      );
+      if (lblObj && lblObj.group === 'legal_relation') return 'reference';
+      const lower = String(labelName || '').trim().toLowerCase();
+      if (lower.startsWith('văn bản ') || lower.includes('căn cứ')) return 'reference';
+      return 'metadata';
+    }
+
+    function extractDocumentId(doc) {
+      const meta = doc?.companionJson?.thuoc_tinh?.metadata;
+      if (meta && (meta.item_id || meta.doc_id || meta.document_id)) {
+        return String(meta.item_id || meta.doc_id || meta.document_id);
+      }
+      const fname = String(doc?.fileName || '');
+      const m = /_(\d+)(?:\.[^.]+)?$/.exec(fname);
+      if (m) return m[1];
+      return String(doc?.id || '');
+    }
+
+    function getDocMetadataField(doc, sortedAnns, labelNames, attrKey, useMetaTitle = false) {
+      for (const lbl of labelNames) {
+        const found = sortedAnns.find(a => a.label.toLowerCase() === lbl.toLowerCase());
+        if (found && found.text && found.text.trim()) {
+          return found.text.trim();
+        }
+      }
+      const tt = doc?.companionJson?.thuoc_tinh;
+      if (tt) {
+        if (useMetaTitle && tt.metadata?.title && String(tt.metadata.title).trim() !== '--') {
+          return String(tt.metadata.title).trim();
+        }
+        if (attrKey && tt.attributes && tt.attributes[attrKey] !== undefined) {
+          const v = String(tt.attributes[attrKey] ?? '').trim();
+          if (v && v !== '--') return v;
+        }
+      }
+      return null;
+    }
+
+    function buildStructuralUnits(doc, sortedAnns) {
+      const fullText = String(doc?.text || '').normalize('NFC');
+      const containerAnns = sortedAnns.filter(a => {
+        const r = getTocStructuralRank(a.label);
+        return r >= 0 && r <= 4; // Phần, Chương, Mục, Tiểu Mục, Điều
+      });
+      if (containerAnns.length === 0) return [];
+
+      const jsonFooterIdx = fullText.indexOf('--- THÔNG TIN THUỘC TÍNH & LƯỢC ĐỒ TỪ FILE JSON ---');
+      let docBodyEnd = jsonFooterIdx !== -1 ? jsonFooterIdx : fullText.length;
+
+      const lastContainerStart = containerAnns[containerAnns.length - 1].start;
+      const sigAnn = sortedAnns.find(
+        a => a.start > lastContainerStart &&
+             a.start < docBodyEnd &&
+             ['chức danh', 'chức danh người ký', 'người ký'].includes(a.label.toLowerCase())
+      );
+      if (sigAnn) {
+        const beforeSig = fullText.slice(lastContainerStart, sigAnn.start);
+        const tmMatch = /\n((?:TM\.|KT\.)[^\n]*)$/.exec(beforeSig);
+        docBodyEnd = tmMatch ? (lastContainerStart + beforeSig.length - tmMatch[1].length) : sigAnn.start;
+      }
+      while (docBodyEnd > 0 && /\s/.test(fullText[docBodyEnd - 1])) {
+        docBodyEnd--;
+      }
+
+      const khoanAnns = sortedAnns.filter(a => getTocStructuralRank(a.label) === 5);
+      const diemAnns = sortedAnns.filter(a => getTocStructuralRank(a.label) === 6);
+
+      const usedUnitIds = new Set();
+      const makeUniqueUnitId = (rawPrefix, rawAnnText, fallbackIdx) => {
+        const firstLine = String(rawAnnText || '').split(/[\r\n\.:\-]+/)[0].trim();
+        const afterKeyword = firstLine.replace(/^(?:Phần|Chương|Mục|Tiểu\s*Mục|Điều)\s+/i, '').trim();
+        let token = '';
+        if (/^\d+$/.test(afterKeyword)) {
+          token = afterKeyword.length === 1 ? ('0' + afterKeyword) : afterKeyword;
+        } else if (afterKeyword) {
+          token = toUpperSnakeCode(afterKeyword).toLowerCase().slice(0, 24);
+        } else {
+          token = String(fallbackIdx).padStart(2, '0');
+        }
+        let cand = `unit_${rawPrefix.toLowerCase()}_${token}`;
+        if (!usedUnitIds.has(cand)) {
+          usedUnitIds.add(cand);
+          return cand;
+        }
+        let n = 2;
+        while (usedUnitIds.has(`${cand}_${n}`)) n++;
+        cand = `${cand}_${n}`;
+        usedUnitIds.add(cand);
+        return cand;
+      };
+
+      const units = [];
+      if (containerAnns[0].start > 0) {
+        usedUnitIds.add('unit_preamble');
+        units.push({
+          id: 'unit_preamble',
+          type: 'PREAMBLE',
+          title: 'Phần mở đầu và Căn cứ ban hành',
+          start: 0,
+          end: containerAnns[0].start,
+          parent_id: null
+        });
+      }
+
+      const unitRecords = [];
+      containerAnns.forEach((ann, idx) => {
+        const rank = getTocStructuralRank(ann.label);
+        const type = toUpperSnakeCode(ann.label);
+        const title = ann.text.replace(/[\r\n\t]+/g, ' ').replace(/\s{2,}/g, ' ').trim();
+        const unitId = makeUniqueUnitId(type, ann.text, idx + 1);
+
+        let end = docBodyEnd;
+        for (let j = idx + 1; j < containerAnns.length; j++) {
+          if (getTocStructuralRank(containerAnns[j].label) <= rank) {
+            end = containerAnns[j].start;
+            break;
+          }
+        }
+        if (end < ann.end) end = ann.end;
+
+        let parentId = null;
+        for (let j = idx - 1; j >= 0; j--) {
+          if (getTocStructuralRank(containerAnns[j].label) < rank) {
+            parentId = unitRecords[j].unitId;
+            break;
+          }
+        }
+
+        const unitObj = {
+          id: unitId,
+          type,
+          title,
+          start: ann.start,
+          end,
+          parent_id: parentId
+        };
+        unitRecords.push({ unitId, ann, rank, end });
+        units.push(unitObj);
+
+        const nextContainerStart = (idx + 1 < containerAnns.length) ? containerAnns[idx + 1].start : end;
+        const innerSpanLimit = Math.min(end, nextContainerStart);
+        const ownKhoans = khoanAnns.filter(k => k.start >= ann.start && k.start < innerSpanLimit);
+
+        ownKhoans.forEach((k, kIdx) => {
+          const kEnd = (kIdx + 1 < ownKhoans.length) ? ownKhoans[kIdx + 1].start : innerSpanLimit;
+          const ownDiems = diemAnns.filter(d => d.start >= k.start && d.start < kEnd);
+          if (ownDiems.length > 0) {
+            const kNumMatch = /^\s*(\d+)\s*[\.\)]/.exec(k.text);
+            const kNum = kNumMatch ? kNumMatch[1] : String(kIdx + 1);
+            const diemLetters = ownDiems
+              .map(d => (/^\s*([a-zA-ZÀ-ỹđĐ]+)\s*[\.\)]/.exec(d.text)?.[1] || '').toLowerCase())
+              .filter(Boolean);
+
+            const shortTitleMatch = /^((?:Phần|Chương|Mục|Tiểu\s*Mục|Điều)\s+[^\n\.\:]+)/i.exec(title);
+            const shortTitle = shortTitleMatch ? shortTitleMatch[1].trim() : title;
+            const kBlockTitle = diemLetters.length > 0
+              ? `${shortTitle} - Khoản ${kNum} (Và các điểm ${diemLetters.join(', ')})`
+              : `${shortTitle} - Khoản ${kNum}`;
+
+            let kBlockId = `${unitId}_k${kNum}`;
+            if (usedUnitIds.has(kBlockId)) {
+              let suffix = 2;
+              while (usedUnitIds.has(`${kBlockId}_${suffix}`)) suffix++;
+              kBlockId = `${kBlockId}_${suffix}`;
+            }
+            usedUnitIds.add(kBlockId);
+
+            units.push({
+              id: kBlockId,
+              type: 'KHOAN_BLOCK',
+              title: kBlockTitle,
+              start: k.start,
+              end: Math.max(kEnd, k.end),
+              parent_id: unitId
+            });
+          }
+        });
+      });
+
+      return units;
+    }
+
     function buildStreamlinedOutput(doc) {
       const { sortedAnns, idMap } = getEntityIdMap(doc);
+      const fullText = String(doc?.text || '').normalize('NFC');
 
-      // Nhóm 1: Entities (có id, nhom="Entities", nhan, noi_dung)
-      const entitiesGroup = sortedAnns.map(a => ({
+      const document_metadata = {
+        ten_van_ban: getDocMetadataField(doc, sortedAnns, ['Tên văn bản'], null, true),
+        so_hieu: getDocMetadataField(doc, sortedAnns, ['Số hiệu'], 'so_hieu'),
+        loai_van_ban: getDocMetadataField(doc, sortedAnns, ['Loại văn bản'], 'loai_van_ban'),
+        co_quan_ban_hanh: getDocMetadataField(doc, sortedAnns, ['Cơ quan ban hành'], 'co_quan_ban_hanh'),
+        ngay_ban_hanh: getDocMetadataField(doc, sortedAnns, ['Ngày ban hành'], 'ngay_ban_hanh'),
+        ngay_co_hieu_luc: getDocMetadataField(doc, sortedAnns, ['Ngày có hiệu lực'], 'ngay_co_hieu_luc'),
+        ngay_het_hieu_luc: getDocMetadataField(doc, sortedAnns, ['Ngày hết hiệu lực'], 'ngay_het_hieu_luc'),
+        tinh_trang_hieu_luc: getDocMetadataField(doc, sortedAnns, ['Tình trạng hiệu lực'], 'tinh_trang_hieu_luc'),
+        chuc_danh: getDocMetadataField(doc, sortedAnns, ['Chức danh', 'Chức danh người ký'], 'chuc_danh_nguoi_ky'),
+        nguoi_ky: getDocMetadataField(doc, sortedAnns, ['Người ký'], 'nguoi_ky'),
+        nganh: getDocMetadataField(doc, sortedAnns, ['Ngành'], 'nganh'),
+        linh_vuc: getDocMetadataField(doc, sortedAnns, ['Lĩnh vực'], 'linh_vuc')
+      };
+
+      const structural_units = buildStructuralUnits(doc, sortedAnns);
+
+      const entities = sortedAnns.map(a => ({
         id: idMap[a.id],
-        nhom: "Entities",
-        nhan: a.label,
-        noi_dung: a.text
+        start: a.start,
+        end: a.end,
+        text: a.text,
+        code: toUpperSnakeCode(a.label),
+        label: a.label,
+        scope: getEntityScope(a.label)
       }));
 
-      // Nhóm 2: Relation (nhom="Relation", tu_id -> den_id, moi_quan_he)
-      const relationGroup = doc.relations.map((r, idx) => {
-        const fromEid = idMap[r.fromId];
-        const toEid = idMap[r.toId];
-        if (!fromEid || !toEid) return null;
-        return {
+      const relations = (doc.relations || [])
+        .filter(r => idMap[r.fromId] && idMap[r.toId])
+        .map((r, idx) => ({
           id: `R${idx + 1}`,
-          nhom: "Relation",
-          tu_id: fromEid,
-          den_id: toEid,
-          moi_quan_he: r.type
-        };
-      }).filter(Boolean);
+          from_id: idMap[r.fromId],
+          to_id: idMap[r.toId],
+          code: toUpperSnakeCode(r.type),
+          label: r.type
+        }));
 
       return {
-        ten_file: doc.fileName,
-        Entities: entitiesGroup,
-        Relation: relationGroup
+        schema_version: "1.0",
+        document_id: extractDocumentId(doc),
+        document_code: document_metadata.so_hieu || null,
+        file_name: doc.fileName,
+        text_encoding: "utf-8-nfc",
+        offset_convention: "0_based_half_open",
+        document_metadata,
+        full_text: fullText,
+        structural_units,
+        entities,
+        relations,
+        future_extensions: {
+          summary: null,
+          qa_pairs: []
+        }
       };
     }
 
     function exportData(format) {
       const doc = getCurrentDoc();
       const baseName = doc.fileName.replace(/\.[^.]+$/, '');
-      const streamlined = buildStreamlinedOutput(doc);
+      const outputData = buildStreamlinedOutput(doc);
 
       if (format === 'json') {
-        const jsonStr = JSON.stringify(streamlined, null, 2);
+        const jsonStr = JSON.stringify(outputData, null, 2);
         downloadBlob(jsonStr, `${baseName}_ket_qua.json`, 'application/json;charset=utf-8');
       } else if (format === 'csv') {
         const csvLines = [];
-        csvLines.push(['NHÓM (ENTITIES / RELATION)', 'ID', 'TÊN NHÃN / MỐI QUAN HỆ', 'NỘI DUNG / TỪ ID', 'SANG ID (NẾU LÀ RELATION)'].map(csvEscape).join(','));
+        csvLines.push(['NHÓM (ENTITY / RELATION)', 'ID', 'CODE', 'LABEL', 'SCOPE / FROM_ID', 'START / TO_ID', 'END', 'TEXT'].map(csvEscape).join(','));
 
-        streamlined.Entities.forEach(item => {
-          csvLines.push(['Entities', item.id, item.nhan, item.noi_dung, ''].map(csvEscape).join(','));
+        outputData.entities.forEach(item => {
+          csvLines.push(['ENTITY', item.id, item.code, item.label, item.scope, item.start, item.end, item.text].map(csvEscape).join(','));
         });
 
-        streamlined.Relation.forEach(rel => {
+        outputData.relations.forEach(rel => {
           csvLines.push([
-            'Relation',
+            'RELATION',
             rel.id,
-            rel.moi_quan_he,
-            rel.tu_id,
-            rel.den_id
+            rel.code,
+            rel.label,
+            rel.from_id,
+            rel.to_id,
+            '',
+            ''
           ].map(csvEscape).join(','));
         });
 
@@ -4850,13 +5465,13 @@
         }
       }
 
-      // 2. Extract from luoc_do.json
+      // 2. Extract from luoc_do.json (chỉ gán nhãn thực thể; không tự nối quan hệ để người dùng tự gán tay)
       if (comp.luoc_do && Array.isArray(comp.luoc_do.relations)) {
         comp.luoc_do.relations.forEach(relGroup => {
-          const { entityLabel, relationType } = mapLuocDoRelationToLabelAndRelType(relGroup.relation_type);
+          const { entityLabel } = mapLuocDoRelationToLabelAndRelType(relGroup.relation_type);
           (relGroup.documents || []).forEach(relDoc => {
             if (relDoc && relDoc.title) {
-              pushCandidate(entityLabel, relDoc.title, relationType, 'luoc_do.json');
+              pushCandidate(entityLabel, relDoc.title, '', 'luoc_do.json');
             }
           });
         });
@@ -4899,16 +5514,11 @@
         walkToc(tocList);
       }
 
-      // 4. Extract from exported _ket_qua.json
+      // 4. Extract from exported _ket_qua.json (không tự nối quan hệ ngoài mục lục)
       if (comp.ket_qua) {
         const ents = comp.ket_qua.Entities || comp.ket_qua.entities || [];
-        const rels = comp.ket_qua.Relation || comp.ket_qua.relations || [];
-        const eidToRel = {};
-        rels.forEach(r => {
-          if (r.den_id && r.moi_quan_he) eidToRel[r.den_id] = r.moi_quan_he;
-        });
         ents.forEach(e => {
-          pushCandidate(e.nhan || e.label, e.noi_dung || e.text, eidToRel[e.id] || '', 'ket_qua.json');
+          pushCandidate(e.nhan || e.label, e.noi_dung || e.text, '', 'ket_qua.json');
         });
       }
 
@@ -5269,34 +5879,17 @@
         }
       });
 
-      // Find source entity for relations (prefer "Số hiệu", fallback to "Tên văn bản")
-      let rootEntityAnn = doc.annotations.find(a => a.label === 'Số hiệu') ||
-                          doc.annotations.find(a => a.label === 'Tên văn bản');
-
-      if (!rootEntityAnn) {
-        // Check if a "Số hiệu" or "Tên văn bản" was just created from candidates
-        const rootCand = createdSpanItems.find(x => x.item.label === 'Số hiệu' || x.item.label === 'Tên văn bản');
-        if (rootCand) {
-          rootEntityAnn = doc.annotations.find(a => a.id === rootCand.spanId);
-        }
-      }
-
-      if (!rootEntityAnn) {
-        rootEntityAnn = doc.annotations.find(a => a.label.toLowerCase().includes('văn bản'));
-      }
-
-      // If still not found and we have relation items to connect, auto-create a root entity for the document
-      if (!rootEntityAnn && createdSpanItems.some(x => x.item.relationType)) {
-        const firstLineEnd = doc.text.indexOf('\n') > 0 ? doc.text.indexOf('\n') : Math.min(doc.text.length, 60);
-        const rootText = doc.text.slice(0, firstLineEnd).trim() || doc.name || 'Văn bản hiện tại';
-        const rootId = ensureEntityAnnotation('Tên văn bản', 0, rootText.length);
-        rootEntityAnn = doc.annotations.find(a => a.id === rootId);
-      }
-
       let relCreatedCount = 0;
+
+      // Chỉ tự động gán quan hệ "Thuộc" cho phần cấu trúc mục lục (Phần <- Chương <- Mục <- Tiểu Mục <- Điều <- Khoản <- Điểm).
+      // Các phần khác giữ nguyên để người dùng tự gán tay (trừ khi tự chọn thủ công trong bảng).
+      const rootEntityAnn = doc.annotations.find(a => a.label === 'Số hiệu') ||
+                            doc.annotations.find(a => a.label === 'Tên văn bản') ||
+                            doc.annotations.find(a => a.id === createdSpanItems.find(x => x.item.label === 'Số hiệu' || x.item.label === 'Tên văn bản')?.spanId);
+
       if (rootEntityAnn) {
         createdSpanItems.forEach(({ spanId, item }) => {
-          if (item.relationType && spanId !== rootEntityAnn.id) {
+          if (item.relationType && item.relationType !== 'Thuộc' && spanId !== rootEntityAnn.id) {
             const exists = doc.relations.some(r => r.fromId === rootEntityAnn.id && r.toId === spanId && r.type === item.relationType);
             if (!exists) {
               doc.relations.push({
@@ -5310,6 +5903,11 @@
           }
         });
       }
+
+      // Auto-assign "Thuộc" relations along TOC hierarchy:
+      // Phần (<-Thuộc) Chương (<-Thuộc) Mục (<-Thuộc) Tiểu Mục (<-Thuộc) Điều (<-Thuộc) Khoản (<-Thuộc) Điểm
+      const touchedIds = new Set(createdSpanItems.map(x => x.spanId));
+      relCreatedCount += autoLinkStructuralHierarchyRelations(doc, touchedIds);
 
       closeModal('jsonAssistantModal');
       renderAll();
