@@ -257,6 +257,16 @@ def extract_docx_structured(file_bytes):
     return full_text, raw_blocks
 
 
+def is_within_data_root(candidate_path):
+    """Check strictly whether candidate_path resolves inside or equal to DATA_ROOT."""
+    norm_root = os.path.normcase(os.path.abspath(DATA_ROOT))
+    norm_cand = os.path.normcase(os.path.abspath(candidate_path))
+    try:
+        return os.path.commonpath([norm_root, norm_cand]) == norm_root
+    except ValueError:
+        return False
+
+
 class LabelingRequestHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=BASE_DIR, **kwargs)
@@ -284,74 +294,116 @@ class LabelingRequestHandler(SimpleHTTPRequestHandler):
             qs = parse_qs(parsed.query)
             search_q = qs.get('q', [''])[0].strip().lower()
             custom_dir = qs.get('dir', [''])[0].strip()
-            limit = int(qs.get('limit', ['300'])[0])
+            try:
+                limit = int(qs.get('limit', ['0'])[0])
+            except ValueError:
+                limit = 0
             samples = []
             total_found = 0
+            outside_data_root = False
+            seen_ids = set()
 
             # Resolve target directories to scan securely under DATA_ROOT
             scan_dirs = []
             if custom_dir:
                 cand = custom_dir if os.path.isabs(custom_dir) else os.path.join(DATA_ROOT, custom_dir)
-                norm_cand = os.path.normpath(cand)
-                if norm_cand == DATA_ROOT or norm_cand.startswith(DATA_ROOT + os.sep):
+                norm_cand = os.path.abspath(cand)
+                if is_within_data_root(norm_cand):
                     if os.path.isdir(norm_cand):
-                        scan_dirs.append((os.path.basename(norm_cand.rstrip('\\/')), norm_cand))
+                        scan_dirs.append(norm_cand)
+                else:
+                    outside_data_root = True
             else:
                 if os.path.isdir(DATA_ROOT):
-                    for dname in sorted(os.listdir(DATA_ROOT)):
-                        dp = os.path.join(DATA_ROOT, dname)
-                        if os.path.isdir(dp):
-                            scan_dirs.append((dname, dp))
+                    scan_dirs.append(os.path.abspath(DATA_ROOT))
 
-            for cat_name, cat_dir in scan_dirs:
-                try:
-                    entries = sorted(os.listdir(cat_dir))
-                except Exception:
-                    continue
+            ignore_dirs = {'__pycache__', 'node_modules'}
+            for root_dir in scan_dirs:
+                for dirpath, dirnames, filenames in os.walk(root_dir, followlinks=False):
+                    dirnames[:] = sorted(
+                        d for d in dirnames
+                        if not d.startswith('.') and d not in ignore_dirs
+                    )
+                    filenames = sorted(filenames)
 
-                # Case A: cat_dir directly contains .docx files
-                direct_docx = [e for e in entries if e.lower().endswith('.docx') and not e.startswith('~$')]
-                if direct_docx:
-                    for docx_fn in direct_docx:
-                        if search_q and search_q not in docx_fn.lower():
+                    doc_files = [
+                        f for f in filenames
+                        if f.lower().endswith(('.docx', '.txt')) and not f.startswith('~$')
+                    ]
+                    if not doc_files:
+                        continue
+
+                    json_files = [f for f in filenames if f.lower().endswith('.json')]
+                    rel_dir = os.path.relpath(dirpath, DATA_ROOT).replace('\\', '/')
+                    rel_parts = [] if rel_dir == '.' else rel_dir.split('/')
+                    cat_name = rel_parts[0] if rel_parts else (os.path.basename(DATA_ROOT.rstrip('\\/')) or 'Data')
+
+                    is_single_bundle = (
+                        len(doc_files) == 1
+                        and rel_dir != '.'
+                        and (
+                            doc_files[0].lower() == 'noi_dung.docx'
+                            or (len(json_files) > 0 and len(rel_parts) >= 2)
+                        )
+                    )
+
+                    if is_single_bundle:
+                        sub_name = os.path.basename(dirpath)
+                        sample_id = rel_dir
+                        if sample_id in seen_ids:
                             continue
+                        if search_q and (
+                            search_q not in sub_name.lower()
+                            and search_q not in doc_files[0].lower()
+                            and search_q not in cat_name.lower()
+                        ):
+                            continue
+                        seen_ids.add(sample_id)
                         total_found += 1
-                        if len(samples) < limit:
+                        if limit <= 0 or len(samples) < limit:
                             samples.append({
-                                'id': os.path.join(cat_dir, docx_fn),
-                                'name': docx_fn,
-                                'category': cat_name,
-                                'has_json': any(e.lower().endswith('.json') for e in entries),
-                                'json_files': [e for e in entries if e.lower().endswith('.json')]
-                            })
-
-                # Case B: cat_dir contains subfolders (each subfolder has noi_dung.docx + thuoc_tinh.json / luoc_do.json / muc_luc.json)
-                for sub_name in entries:
-                    sub_path = os.path.join(cat_dir, sub_name)
-                    if not os.path.isdir(sub_path):
-                        continue
-                    if search_q and search_q not in sub_name.lower():
-                        continue
-                    try:
-                        sub_files = os.listdir(sub_path)
-                    except Exception:
-                        continue
-                    docx_candidates = [f for f in sub_files if f.lower().endswith('.docx') and not f.startswith('~$')]
-                    if docx_candidates:
-                        total_found += 1
-                        if len(samples) < limit:
-                            json_files = [f for f in sorted(sub_files) if f.lower().endswith('.json')]
-                            samples.append({
-                                'id': f"{cat_name}/{sub_name}" if not custom_dir else sub_path,
+                                'id': sample_id,
                                 'name': sub_name,
                                 'category': cat_name,
                                 'has_json': len(json_files) > 0,
                                 'json_files': json_files
                             })
+                    else:
+                        for fname in doc_files:
+                            sample_id = fname if rel_dir == '.' else f"{rel_dir}/{fname}"
+                            if sample_id in seen_ids:
+                                continue
+                            if search_q and (
+                                search_q not in fname.lower()
+                                and search_q not in cat_name.lower()
+                                and search_q not in sample_id.lower()
+                            ):
+                                continue
+                            stem_lower = os.path.splitext(fname)[0].lower()
+                            if len(doc_files) == 1:
+                                matched_jsons = json_files
+                            else:
+                                matched_jsons = [
+                                    jf for jf in json_files
+                                    if os.path.splitext(jf)[0].lower() == stem_lower
+                                    or jf.lower().startswith(stem_lower + '_')
+                                ]
+                            seen_ids.add(sample_id)
+                            total_found += 1
+                            if limit <= 0 or len(samples) < limit:
+                                samples.append({
+                                    'id': sample_id,
+                                    'name': fname,
+                                    'category': cat_name,
+                                    'has_json': len(matched_jsons) > 0,
+                                    'json_files': matched_jsons
+                                })
 
             self.send_json({
                 'samples': samples,
                 'total': total_found,
+                'limit': limit,
+                'outside_data_root': outside_data_root,
                 'active_dir': custom_dir or DATA_ROOT
             })
             return
@@ -364,17 +416,11 @@ class LabelingRequestHandler(SimpleHTTPRequestHandler):
                 return
 
             # Resolve folder or file path securely under DATA_ROOT
-            if os.path.isabs(folder):
-                norm_cand = os.path.normpath(folder)
-                if not (norm_cand == DATA_ROOT or norm_cand.startswith(DATA_ROOT + os.sep)):
-                    self.send_json({'error': 'Đường dẫn không hợp lệ hoặc nằm ngoài thư mục Data'}, status=403)
-                    return
-                target_path = norm_cand
-            else:
-                target_path = os.path.normpath(os.path.join(DATA_ROOT, folder.replace('/', os.sep)))
-                if not (target_path == DATA_ROOT or target_path.startswith(DATA_ROOT + os.sep)):
-                    self.send_json({'error': 'Đường dẫn không hợp lệ hoặc nằm ngoài thư mục Data'}, status=403)
-                    return
+            cand_path = folder if os.path.isabs(folder) else os.path.join(DATA_ROOT, folder.replace('/', os.sep))
+            target_path = os.path.abspath(cand_path)
+            if not is_within_data_root(target_path):
+                self.send_json({'error': 'Đường dẫn không hợp lệ hoặc nằm ngoài thư mục Data'}, status=403)
+                return
 
             if not os.path.exists(target_path):
                 # Fallback: search inside subdirectories of DATA_ROOT
@@ -382,49 +428,72 @@ class LabelingRequestHandler(SimpleHTTPRequestHandler):
                 if os.path.isdir(DATA_ROOT):
                     for dname in os.listdir(DATA_ROOT):
                         cand = os.path.join(DATA_ROOT, dname, base_f)
-                        if os.path.exists(cand):
+                        if os.path.exists(cand) and is_within_data_root(cand):
                             target_path = cand
                             break
 
-            docx_path = None
+            doc_path = None
             folder_dir = None
             display_name = os.path.basename(target_path)
 
-            if os.path.isfile(target_path) and target_path.lower().endswith('.docx'):
-                docx_path = target_path
+            if os.path.isfile(target_path) and target_path.lower().endswith(('.docx', '.txt')):
+                doc_path = target_path
                 folder_dir = os.path.dirname(target_path)
             elif os.path.isdir(target_path):
                 folder_dir = target_path
                 cand_noi_dung = os.path.join(target_path, 'noi_dung.docx')
                 if os.path.isfile(cand_noi_dung):
-                    docx_path = cand_noi_dung
+                    doc_path = cand_noi_dung
                 else:
-                    for f in os.listdir(target_path):
+                    dir_entries = sorted(os.listdir(target_path))
+                    for f in dir_entries:
                         if f.lower().endswith('.docx') and not f.startswith('~$'):
-                            docx_path = os.path.join(target_path, f)
+                            doc_path = os.path.join(target_path, f)
                             break
-                if not display_name.lower().endswith('.docx'):
-                    display_name = f"{display_name}.docx"
+                    if not doc_path:
+                        for f in dir_entries:
+                            if f.lower().endswith('.txt') and not f.startswith('~$'):
+                                doc_path = os.path.join(target_path, f)
+                                break
+                if not display_name.lower().endswith(('.docx', '.txt')):
+                    suffix = '.txt' if (doc_path and doc_path.lower().endswith('.txt')) else '.docx'
+                    display_name = f"{display_name}{suffix}"
 
-            if not docx_path or not os.path.isfile(docx_path):
-                self.send_json({'error': f'Không tìm thấy file .docx trong: {folder}'}, status=404)
+            if not doc_path or not os.path.isfile(doc_path):
+                self.send_json({'error': f'Không tìm thấy file .docx/.txt trong: {folder}'}, status=404)
                 return
 
-            with open(docx_path, 'rb') as f:
-                full_text, blocks = extract_docx_structured(f.read())
+            if doc_path.lower().endswith('.txt'):
+                with open(doc_path, 'r', encoding='utf-8-sig') as f:
+                    full_text = unicodedata.normalize('NFC', f.read()).replace('\r\n', '\n').replace('\r', '\n').strip()
+                blocks = []
+            else:
+                with open(doc_path, 'rb') as f:
+                    full_text, blocks = extract_docx_structured(f.read())
 
-            # Automatically read companion JSON files (thuoc_tinh.json, luoc_do.json, muc_luc.json) if present
+            # Read companion JSON files without mixing unrelated files when multiple docs share a folder
             companion_json = {}
             if folder_dir and os.path.isdir(folder_dir):
-                for jf in os.listdir(folder_dir):
-                    if jf.lower().endswith('.json'):
-                        jpath = os.path.join(folder_dir, jf)
-                        try:
-                            with open(jpath, 'r', encoding='utf-8-sig') as jfile:
-                                key = os.path.splitext(jf)[0].lower().strip()
-                                companion_json[key] = json.load(jfile)
-                        except Exception:
-                            pass
+                all_entries = sorted(os.listdir(folder_dir))
+                sibling_docs = [
+                    x for x in all_entries
+                    if x.lower().endswith(('.docx', '.txt')) and not x.startswith('~$')
+                ]
+                doc_stem = os.path.splitext(os.path.basename(doc_path))[0].lower()
+                for jf in all_entries:
+                    if not jf.lower().endswith('.json'):
+                        continue
+                    if len(sibling_docs) > 1:
+                        jf_stem = os.path.splitext(jf)[0].lower()
+                        if jf_stem != doc_stem and not jf.lower().startswith(doc_stem + '_'):
+                            continue
+                    jpath = os.path.join(folder_dir, jf)
+                    try:
+                        with open(jpath, 'r', encoding='utf-8-sig') as jfile:
+                            key = os.path.splitext(jf)[0].lower().strip()
+                            companion_json[key] = json.load(jfile)
+                    except Exception:
+                        pass
 
             self.send_json({
                 'file_name': display_name,

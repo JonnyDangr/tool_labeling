@@ -192,6 +192,7 @@
       display: flex;
       background: #f8fafc;
       border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
     }
 
     .left-tab-btn {
@@ -214,8 +215,24 @@
 
     .left-list-container {
       flex: 1;
+      min-height: 0;
       overflow-y: auto;
       padding: 10px;
+    }
+
+    .left-list-banner {
+      font-size: 11px;
+      font-weight: 700;
+      color: #475569;
+      background: #f1f5f9;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 5px 8px;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
     }
 
     .doc-list-item {
@@ -572,6 +589,12 @@
       line-height: 1.3;
     }
 
+    .span-badge.selected-badge {
+      outline: 2px solid #0f172a;
+      box-shadow: 0 0 0 2px #ffffff, 0 2px 6px rgba(15, 23, 42, 0.35);
+      transform: translateY(-1px);
+    }
+
     /* RIGHT COLUMN: STICKY / FIXED SIDEBAR (NEVER DISAPPEARS WHEN SCROLLING) */
     .right-sidebar {
       width: 465px;
@@ -704,6 +727,75 @@
       cursor: pointer;
     }
     .label-delete-btn:hover { opacity: 1; color: #b91c1c; }
+
+    /* SELECTED LABELS TRAY (CHỌN NHIỀU NHÃN CÙNG LÚC) */
+    .selected-labels-tray {
+      padding: 8px 14px;
+      background: #f0f9ff;
+      border-bottom: 1px solid #bae6fd;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+    .selected-labels-tray.empty {
+      background: #f8fafc;
+      border-bottom-color: var(--border);
+    }
+    .tray-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .tray-title {
+      font-size: 11.5px;
+      font-weight: 800;
+      color: #0369a1;
+    }
+    .tray-empty {
+      font-size: 11.5px;
+      color: #64748b;
+    }
+    .tray-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      align-items: center;
+    }
+    .active-label-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 6px 3px 8px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 700;
+      color: #0f172a;
+      border: 1.5px solid #0f172a;
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+    }
+    .active-pill-remove {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 16px;
+      height: 16px;
+      border-radius: 4px;
+      border: none;
+      background: rgba(15, 23, 42, 0.14);
+      color: #0f172a;
+      font-size: 10px;
+      font-weight: 800;
+      cursor: pointer;
+      padding: 0;
+      line-height: 1;
+      transition: background 0.12s, color 0.12s;
+    }
+    .active-pill-remove:hover {
+      background: #dc2626;
+      color: #ffffff;
+    }
 
     /* BOTTOM HALF OF RIGHT SIDEBAR: TABS */
     .bottom-tabs-panel {
@@ -1093,6 +1185,7 @@
       display: none;
       flex-direction: column;
       gap: 6px;
+      flex-shrink: 0;
     }
     .folder-picker-box.visible {
       display: flex;
@@ -1490,10 +1583,12 @@
             placeholder="Tìm nhanh tên nhãn..."
             oninput="renderLabelsPanel()"
           />
-          <button class="btn btn-outline btn-sm" onclick="setActiveLabel(null); deselectSpan();" title="Bỏ chọn nhãn đang kích hoạt">
-            Bỏ chọn
+          <button class="btn btn-outline btn-sm" onclick="clearAllActiveLabels(); deselectSpan();" title="Bỏ hết các nhãn đang chọn">
+            Bỏ hết
           </button>
         </div>
+
+        <div id="selectedLabelsTray" class="selected-labels-tray"></div>
 
         <div class="labels-scroll-area" id="labelsContainer"></div>
       </div>
@@ -1858,7 +1953,7 @@
       relationTypes: JSON.parse(localStorage.getItem('legal_rel_types_v1')) || DEFAULT_RELATIONS,
       documents: JSON.parse(localStorage.getItem('legal_docs_v2')) || [SAMPLE_INITIAL_DOC],
       currentDocId: localStorage.getItem('legal_current_doc_v2') || SAMPLE_INITIAL_DOC.id,
-      activeLabel: "Số hiệu",
+      activeLabels: ["Số hiệu"],
       selectedSpanId: null,
       relationSourceSpanId: null,
       pendingRelationTargetSpanId: null,
@@ -1871,6 +1966,9 @@
       leftActiveTab: 'labeled',
       serverSamples: [],
       serverFolders: [],
+      _serverFolderCounts: {},
+      _leftRenderToken: 0,
+      _lastLeftRenderViewKey: '',
       localFolderSamples: [],
       activeFolderSource: 'server_all',
       customServerDir: '',
@@ -2253,6 +2351,86 @@
       });
     }
 
+    function buildDocCleanNameMap() {
+      const map = new Map();
+      for (const d of state.documents) {
+        const key = String(d.fileName || '').trim().toLowerCase().replace(/\.(docx|txt)$/i, '');
+        if (!key) continue;
+        const prev = map.get(key);
+        if (!prev || ((d.annotations?.length || 0) > 0 && (prev.annotations?.length || 0) === 0)) {
+          map.set(key, d);
+        }
+      }
+      return map;
+    }
+
+    function renderLeftListChunked(box, items, renderItemFn, viewKey) {
+      const token = ++state._leftRenderToken;
+      const sameView = (state._lastLeftRenderViewKey === viewKey);
+      const prevScrollTop = sameView ? box.scrollTop : 0;
+      state._lastLeftRenderViewKey = viewKey;
+
+      if (items.length <= 350) {
+        box.innerHTML = items.map((it, idx) => renderItemFn(it, idx)).join('');
+        box.scrollTop = (sameView && prevScrollTop > 0) ? prevScrollTop : 0;
+        return;
+      }
+
+      const estMinCount = sameView ? (Math.ceil(prevScrollTop / 46) + 80) : 0;
+      const firstCount = Math.min(items.length, Math.max(300, estMinCount));
+      let firstHtml = '';
+      for (let i = 0; i < firstCount; i++) {
+        firstHtml += renderItemFn(items[i], i);
+      }
+
+      const doneAllFirst = firstCount >= items.length;
+      const initialBannerText = doneAllFirst
+        ? `Hiển thị đầy đủ: ${items.length.toLocaleString('vi-VN')} / ${items.length.toLocaleString('vi-VN')} file`
+        : `Đang hiển thị ${firstCount.toLocaleString('vi-VN')} / ${items.length.toLocaleString('vi-VN')} file...`;
+
+      box.innerHTML = `
+        <div class="left-list-banner" id="leftListStatusBanner">
+          <span>${initialBannerText}</span>
+        </div>
+        <div id="leftListChunkRoot">${firstHtml}</div>
+      `;
+      box.scrollTop = (sameView && prevScrollTop > 0) ? prevScrollTop : 0;
+
+      if (doneAllFirst) return;
+
+      const scheduleNext = (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function')
+        ? window.requestAnimationFrame.bind(window)
+        : (fn) => setTimeout(fn, 0);
+      let cursor = firstCount;
+      const CHUNK_SIZE = 400;
+
+      const appendNext = () => {
+        if (state._leftRenderToken !== token) return;
+        const rootEl = document.getElementById('leftListChunkRoot');
+        const bannerEl = document.getElementById('leftListStatusBanner');
+        if (!rootEl) return;
+
+        const end = Math.min(items.length, cursor + CHUNK_SIZE);
+        let chunkHtml = '';
+        for (let i = cursor; i < end; i++) {
+          chunkHtml += renderItemFn(items[i], i);
+        }
+        rootEl.insertAdjacentHTML('beforeend', chunkHtml);
+        cursor = end;
+
+        if (cursor < items.length) {
+          if (bannerEl) {
+            bannerEl.innerHTML = `<span>Đang nạp danh sách: ${cursor.toLocaleString('vi-VN')} / ${items.length.toLocaleString('vi-VN')} file...</span>`;
+          }
+          scheduleNext(appendNext);
+        } else if (bannerEl) {
+          bannerEl.innerHTML = `<span>Hiển thị đầy đủ: ${items.length.toLocaleString('vi-VN')} / ${items.length.toLocaleString('vi-VN')} file</span>`;
+        }
+      };
+
+      scheduleNext(appendNext);
+    }
+
     function renderLeftSidebar() {
       const labeledDocs = state.documents.filter(d => d.annotations && d.annotations.length > 0);
       document.getElementById('labeledDocsCountBadge').textContent = labeledDocs.length;
@@ -2269,12 +2447,15 @@
       const q = (document.getElementById('leftDocSearchInput').value || '').trim().toLowerCase();
       const box = document.getElementById('leftListContainer');
       const curDoc = getCurrentDoc();
+      const viewKey = `${state.leftActiveTab}|${state.activeFolderSource}|${q}`;
 
       if (state.leftActiveTab === 'labeled' || state.leftActiveTab === 'all') {
         const sourceList = state.leftActiveTab === 'labeled' ? labeledDocs : state.documents;
-        const filtered = sourceList.filter(d => d.fileName.toLowerCase().includes(q));
+        const filtered = q ? sourceList.filter(d => (d.fileName || '').toLowerCase().includes(q)) : sourceList;
 
         if (filtered.length === 0) {
+          ++state._leftRenderToken;
+          state._lastLeftRenderViewKey = viewKey;
           box.innerHTML = `<div class="empty-state">
             ${state.leftActiveTab === 'labeled'
               ? 'Chưa có văn bản nào được gán nhãn phù hợp.'
@@ -2283,7 +2464,7 @@
           return;
         }
 
-        box.innerHTML = filtered.map(d => {
+        const renderDocRow = (d) => {
           const isLabeled = d.annotations.length > 0;
           const isActive = d.id === curDoc.id;
           const hasComp = d.companionJson && (d.companionJson.thuoc_tinh || d.companionJson.luoc_do || d.companionJson.muc_luc);
@@ -2302,12 +2483,20 @@
               </div>
             </div>
           `;
-        }).join('');
+        };
+        renderLeftListChunked(box, filtered, renderDocRow, viewKey);
       } else if (state.leftActiveTab === 'folder') {
-        const filteredSamples = folderItems.filter(item =>
-          (item.name || '').toLowerCase().includes(q) || (item.category || '').toLowerCase().includes(q)
-        );
+        const filteredSamples = q
+          ? folderItems.filter(item =>
+              (item.name || '').toLowerCase().includes(q) ||
+              (item.category || '').toLowerCase().includes(q) ||
+              (item.id || '').toLowerCase().includes(q)
+            )
+          : folderItems;
+
         if (filteredSamples.length === 0) {
+          ++state._leftRenderToken;
+          state._lastLeftRenderViewKey = viewKey;
           box.innerHTML = `<div class="empty-state">
             Chưa có file trong thư mục này.<br/>
             Hãy bấm nút <b>"Chọn Thư Mục Trên Máy"</b> ở trên để chọn bất kỳ thư mục nào chứa file <code>.docx</code> và <code>.json</code>!
@@ -2315,9 +2504,12 @@
           return;
         }
 
-        box.innerHTML = filteredSamples.map((item, idx) => {
-          const fileName = item.name.endsWith('.docx') || item.name.endsWith('.txt') ? item.name : `${item.name}.docx`;
-          const existing = findExistingDuplicateDoc(fileName, '');
+        const docByCleanName = buildDocCleanNameMap();
+        const renderSampleRow = (item) => {
+          const rawName = item.name || '';
+          const fileName = /\.(docx|txt)$/i.test(rawName) ? rawName : `${rawName}.docx`;
+          const cleanName = fileName.trim().toLowerCase().replace(/\.(docx|txt)$/i, '');
+          const existing = docByCleanName.get(cleanName) || null;
           const isLabeled = existing && existing.annotations.length > 0;
           const isOpened = existing && !isLabeled;
           const clickAction = item.isLocal
@@ -2343,7 +2535,8 @@
               </div>
             </div>
           `;
-        }).join('');
+        };
+        renderLeftListChunked(box, filteredSamples, renderSampleRow, viewKey);
       }
     }
 
@@ -2534,11 +2727,17 @@
       `;
     }
 
+    function findSpanDomElement(spanId) {
+      if (!spanId) return null;
+      return document.querySelector(`.annotated-span[data-span-id="${spanId}"]`) ||
+             document.querySelector(`.annotated-span[data-span-ids~="${spanId}"]`) ||
+             document.querySelector(`.span-badge[data-span-id="${spanId}"]`);
+    }
+
     function highlightRelationOnDoc(relId, fromSpanId, toSpanId) {
       state.highlightedRelId = (state.highlightedRelId === relId) ? null : relId;
       renderAll();
-      const el = document.querySelector(`.annotated-span[data-span-id="${fromSpanId}"]`) ||
-                 document.querySelector(`.annotated-span[data-span-id="${toSpanId}"]`);
+      const el = findSpanDomElement(fromSpanId) || findSpanDomElement(toSpanId);
       if (el) {
         el.scrollIntoView({ behavior: 'smooth', block: 'center' });
       }
@@ -2610,8 +2809,8 @@
 
       const items = [];
       relsToDraw.forEach(r => {
-        const fromEl = document.querySelector(`.annotated-span[data-span-id="${r.fromId}"]`);
-        const toEl = document.querySelector(`.annotated-span[data-span-id="${r.toId}"]`);
+        const fromEl = findSpanDomElement(r.fromId);
+        const toEl = findSpanDomElement(r.toId);
         if (!fromEl || !toEl) return;
 
         const r1 = getFirstLineRect(fromEl);
@@ -2808,12 +3007,15 @@
       }
 
       bar.className = 'status-bar';
-      if (state.activeLabel) {
-        const color = getLabelColor(state.activeLabel);
-        textEl.innerHTML = `Nhãn đang bật: <span style="background:${color};color:#111;padding:2px 8px;border-radius:5px;font-weight:700;">${escapeHtml(state.activeLabel)}</span> — Bôi đen văn bản để gán, hoặc click vào văn bản đã gán nhãn rồi bấm nhãn mới bên phải để đổi nhãn.`;
-        actEl.innerHTML = `<button class="btn btn-outline btn-sm" onclick="setActiveLabel(null)">Tắt chọn sẵn</button>`;
+      if (state.activeLabels && state.activeLabels.length > 0) {
+        const pillsHtml = state.activeLabels.map(lbl => {
+          const color = getLabelColor(lbl);
+          return `<span class="active-label-pill" style="background:${color};">${escapeHtml(lbl)}<button type="button" class="active-pill-remove" title="Bỏ nhãn này" onclick="removeActiveLabel('${escapeJs(lbl)}')">✕</button></span>`;
+        }).join(' ');
+        textEl.innerHTML = `Nhãn đang chọn (${state.activeLabels.length}): ${pillsHtml} — Bôi đen văn bản để gán${state.activeLabels.length > 1 ? ' đồng thời các nhãn này' : ''}, hoặc click văn bản đã gán để sửa.`;
+        actEl.innerHTML = `<button class="btn btn-outline btn-sm" onclick="clearAllActiveLabels()">Bỏ hết nhãn</button>`;
       } else {
-        textEl.innerHTML = `Bôi đen văn bản để gán nhãn mới — hoặc click vào văn bản đã gán nhãn rồi bấm nhãn mới bên phải để đổi nhãn.`;
+        textEl.innerHTML = `Chọn 1 hoặc nhiều nhãn bên phải rồi bôi đen văn bản để gán — hoặc click vào văn bản đã gán nhãn rồi bấm nhãn mới bên phải để đổi nhãn.`;
         actEl.innerHTML = ``;
       }
     }
@@ -2892,7 +3094,7 @@
         return;
       }
 
-      const el = document.querySelector(`.annotated-span[data-span-id="${spanId}"]`);
+      const el = findSpanDomElement(spanId);
       const container = document.getElementById('docScrollContainer');
       if (!el || !container) {
         popover.classList.remove('visible');
@@ -2924,7 +3126,42 @@
       popover.style.left = `${left}px`;
     }
 
+    function renderSelectedLabelsTray() {
+      const tray = document.getElementById('selectedLabelsTray');
+      if (!tray) return;
+      const active = state.activeLabels || [];
+      if (active.length === 0) {
+        tray.className = 'selected-labels-tray empty';
+        tray.innerHTML = `
+          <div class="tray-header">
+            <span class="tray-title">Nhãn đang chọn (0)</span>
+          </div>
+          <div class="tray-empty">Bấm 1 hoặc nhiều nhãn bên dưới để chọn, sau đó bôi đen văn bản để gán đồng thời.</div>
+        `;
+        return;
+      }
+      tray.className = 'selected-labels-tray';
+      const pillsHtml = active.map(lbl => {
+        const c = getLabelColor(lbl);
+        return `
+          <span class="active-label-pill" style="background:${hexToRgba(c, 0.35)}; border-color:${c};">
+            <span class="label-color-dot" style="background:${c}"></span>
+            <span>${escapeHtml(lbl)}</span>
+            <button type="button" class="active-pill-remove" title="Bỏ nhãn này" onclick="removeActiveLabel('${escapeJs(lbl)}')">✕</button>
+          </span>
+        `;
+      }).join('');
+      tray.innerHTML = `
+        <div class="tray-header">
+          <span class="tray-title">Nhãn đang chọn (${active.length}) — Bôi đen để gán cùng lúc</span>
+          <button type="button" class="btn btn-outline btn-sm" style="padding:2px 8px;font-size:11px;" onclick="clearAllActiveLabels()">Bỏ hết</button>
+        </div>
+        <div class="tray-chips">${pillsHtml}</div>
+      `;
+    }
+
     function renderLabelsPanel() {
+      renderSelectedLabelsTray();
       const container = document.getElementById('labelsContainer');
       const query = (document.getElementById('labelSearchInput').value || '').trim().toLowerCase();
       const doc = getCurrentDoc();
@@ -2939,7 +3176,7 @@
       const relLabels = state.labels.filter(l => l.group === 'legal_relation' && l.name.toLowerCase().includes(query));
 
       const renderGroup = (list) => list.map(l => {
-        const isActive = selSpan ? (selSpan.label === l.name) : (state.activeLabel === l.name);
+        const isActive = selSpan ? (selSpan.label === l.name) : state.activeLabels.includes(l.name);
         const cnt = counts[l.name] || 0;
         const bg = hexToRgba(l.color, 0.25);
         return `
@@ -3022,13 +3259,15 @@
           const badgesHtml = endingHere.map(a => {
             const c = getLabelColor(a.label);
             const eid = idMap[a.id] || a.id;
-            return `<span class="span-badge" contenteditable="false" style="background:${c}" onclick="event.stopPropagation(); onSpanClick('${a.id}')">${escapeHtml(eid)}: ${escapeHtml(a.label)}</span>`;
+            const isBadgeSel = a.id === state.selectedSpanId;
+            return `<span class="span-badge ${isBadgeSel ? 'selected-badge' : ''}" data-span-id="${a.id}" contenteditable="false" style="background:${c}" onclick="event.stopPropagation(); onSpanClick('${a.id}')">${escapeHtml(eid)}: ${escapeHtml(a.label)}</span>`;
           }).join('');
 
           html += `<span class="annotated-span ${isSelected ? 'selected-span' : ''} ${isRelSource ? 'relation-source' : ''} ${isRelPairHi ? 'relation-highlight-pair' : ''}"
                          data-start="${segStart}"
                          data-end="${segEnd}"
                          data-span-id="${topSpan.id}"
+                         data-span-ids="${covering.map(c => c.id).join(' ')}"
                          style="background:${bg}; border-bottom-color:${color};"
                          onclick="event.stopPropagation(); onSpanClick('${topSpan.id}')">${leftHandleHtml}<span class="doc-seg" data-start="${segStart}" data-end="${segEnd}">${segText}</span>${rightHandleHtml}${badgesHtml}</span>`;
         }
@@ -3425,7 +3664,6 @@
       if (span && newLabelName) {
         const oldLabel = span.label;
         span.label = newLabelName;
-        state.activeLabel = newLabelName;
 
         const oldRank = getTocStructuralRank(oldLabel);
         const newRank = getTocStructuralRank(newLabelName);
@@ -3578,9 +3816,9 @@
         timestamp: Date.now()
       };
 
-      // Nếu đang bật sẵn nhãn và không ở chế độ nối quan hệ: gán nhãn ngay (cho cả nội dung docx lẫn phần JSON)
-      if (state.activeLabel && !state.relationSourceSpanId) {
-        addAnnotation(state.activeLabel, selInfo.start, selInfo.end, selInfo.text);
+      // Nếu đang chọn sẵn 1 hoặc nhiều nhãn và không ở chế độ nối quan hệ: gán đồng thời toàn bộ nhãn đang chọn
+      if (state.activeLabels.length > 0 && !state.relationSourceSpanId) {
+        addAnnotationsBatch(state.activeLabels, selInfo.start, selInfo.end, selInfo.text);
         window.getSelection().removeAllRanges();
       }
     });
@@ -3831,10 +4069,14 @@
     function handleLabelChipClick(labelName) {
       const selInfo = getSelectionOffsetsInDoc();
       if (selInfo) {
-        addAnnotation(labelName, selInfo.start, selInfo.end, selInfo.text);
+        const targets = state.activeLabels.includes(labelName)
+          ? [...state.activeLabels]
+          : [...state.activeLabels, labelName];
+        if (!state.activeLabels.includes(labelName)) {
+          state.activeLabels.push(labelName);
+        }
+        addAnnotationsBatch(targets, selInfo.start, selInfo.end, selInfo.text);
         window.getSelection().removeAllRanges();
-        state.activeLabel = labelName;
-        renderAll();
         return;
       }
 
@@ -3843,37 +4085,83 @@
         return;
       }
 
-      setActiveLabel(state.activeLabel === labelName ? null : labelName);
+      toggleActiveLabel(labelName);
     }
 
-    function setActiveLabel(labelName) {
-      state.activeLabel = labelName;
+    function toggleActiveLabel(labelName) {
+      if (!labelName) return;
+      const idx = state.activeLabels.indexOf(labelName);
+      if (idx !== -1) {
+        state.activeLabels.splice(idx, 1);
+      } else {
+        state.activeLabels.push(labelName);
+      }
       renderLabelsPanel();
       renderStatusBar();
     }
 
-    function addAnnotation(labelName, start, end, text) {
+    function removeActiveLabel(labelName) {
+      state.activeLabels = state.activeLabels.filter(l => l !== labelName);
+      renderLabelsPanel();
+      renderStatusBar();
+    }
+
+    function clearAllActiveLabels() {
+      if (state.activeLabels.length === 0) return;
+      state.activeLabels = [];
+      renderLabelsPanel();
+      renderStatusBar();
+    }
+
+    function setActiveLabel(labelName) {
+      state.activeLabels = labelName ? [labelName] : [];
+      renderLabelsPanel();
+      renderStatusBar();
+    }
+
+    function addAnnotationsBatch(labelNames, start, end, text) {
+      const uniqueLabels = [];
+      (labelNames || []).forEach(lbl => {
+        if (lbl && !uniqueLabels.includes(lbl)) uniqueLabels.push(lbl);
+      });
+      if (uniqueLabels.length === 0) return [];
+
       const doc = getCurrentDoc();
-      const exists = doc.annotations.find(a => a.label === labelName && a.start === start && a.end === end);
-      if (exists) {
-        state.selectedSpanId = exists.id;
-        renderAll();
-        return;
+      const addedSpans = [];
+      const tocIds = new Set();
+
+      uniqueLabels.forEach((labelName, idx) => {
+        const exists = doc.annotations.find(a => a.label === labelName && a.start === start && a.end === end);
+        if (exists) {
+          addedSpans.push(exists);
+          return;
+        }
+        const newAnn = {
+          id: 'sp_' + Date.now() + '_' + idx + '_' + Math.random().toString(36).slice(2, 6),
+          label: labelName,
+          start,
+          end,
+          text
+        };
+        doc.annotations.push(newAnn);
+        addedSpans.push(newAnn);
+        if (getTocStructuralRank(labelName) !== -1) {
+          tocIds.add(newAnn.id);
+        }
+      });
+
+      if (tocIds.size > 0) {
+        autoLinkStructuralHierarchyRelations(doc, tocIds);
       }
 
-      const newAnn = {
-        id: 'sp_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
-        label: labelName,
-        start,
-        end,
-        text
-      };
-      doc.annotations.push(newAnn);
-      if (getTocStructuralRank(labelName) !== -1) {
-        autoLinkStructuralHierarchyRelations(doc, new Set([newAnn.id]));
-      }
-      state.selectedSpanId = newAnn.id;
+      state.selectedSpanId = null;
+      state.popoverManualPos = null;
       renderAll();
+      return addedSpans;
+    }
+
+    function addAnnotation(labelName, start, end, text) {
+      return addAnnotationsBatch([labelName], start, end, text);
     }
 
     function deleteAnnotation(spanId) {
@@ -3928,7 +4216,7 @@
       }
       state.selectedSpanId = spanId;
       renderAll();
-      const el = document.querySelector(`.annotated-span[data-span-id="${spanId}"]`);
+      const el = findSpanDomElement(spanId);
       if (el) {
         el.scrollIntoView({ behavior: 'smooth', block: 'center' });
       }
@@ -4594,9 +4882,8 @@
       if (res.hasRelationsTag) {
         state.relationTypes = res.relationTypes;
       }
-      if (state.activeLabel && !state.labels.some(l => l.name === state.activeLabel)) {
-        state.activeLabel = state.labels[0]?.name || null;
-      }
+      const validLabelNames = new Set(state.labels.map(l => l.name));
+      state.activeLabels = (state.activeLabels || []).filter(lbl => validLabelNames.has(lbl));
 
       try {
         localStorage.setItem('legal_label_xml_v1', xmlStr);
@@ -4966,15 +5253,16 @@
       let html = `<option value="server_all" ${state.activeFolderSource === 'server_all' ? 'selected' : ''}>Kho dữ liệu Server (Data/)</option>`;
       (state.serverFolders || []).forEach(f => {
         const val = 'server_dir:' + f.name;
-        const countSuffix = f.count !== undefined ? ` (${f.count} văn bản)` : '';
-        html += `<option value="${escapeHtml(val)}" ${state.activeFolderSource === val ? 'selected' : ''}>📁 Data/${escapeHtml(f.name)}${countSuffix}</option>`;
+        const cnt = f.count !== undefined ? f.count : state._serverFolderCounts?.[f.name];
+        const countSuffix = cnt !== undefined ? ` (${Number(cnt).toLocaleString('vi-VN')} văn bản)` : '';
+        html += `<option value="${escapeHtml(val)}" ${state.activeFolderSource === val ? 'selected' : ''}>Data/${escapeHtml(f.name)}${countSuffix}</option>`;
       });
       if (state.customServerDir) {
         const val = 'server_dir:' + state.customServerDir;
-        html += `<option value="${escapeHtml(val)}" ${state.activeFolderSource === val ? 'selected' : ''}>🖴 ${escapeHtml(state.customServerDir)}</option>`;
+        html += `<option value="${escapeHtml(val)}" ${state.activeFolderSource === val ? 'selected' : ''}>${escapeHtml(state.customServerDir)}</option>`;
       }
       if (state.localFolderSamples.length > 0) {
-        html += `<option value="local_picked" ${state.activeFolderSource === 'local_picked' ? 'selected' : ''}>💻 Thư mục chọn từ máy (${state.localFolderSamples.length} văn bản)</option>`;
+        html += `<option value="local_picked" ${state.activeFolderSource === 'local_picked' ? 'selected' : ''}>Thư mục chọn từ máy (${state.localFolderSamples.length.toLocaleString('vi-VN')} văn bản)</option>`;
       }
       sel.innerHTML = html;
     }
@@ -4987,7 +5275,7 @@
           const fData = await fRes.json();
           state.serverFolders = fData.folders || [];
         }
-        const url = `/api/samples?limit=500${dirFilter ? '&dir=' + encodeURIComponent(dirFilter) : ''}`;
+        const url = `/api/samples?limit=0${dirFilter ? '&dir=' + encodeURIComponent(dirFilter) : ''}`;
         const res = await fetch(url);
         if (!res.ok) return;
         const data = await res.json();
@@ -4997,6 +5285,17 @@
             ? { id: s, name: s, category: 'Data', has_json: false, json_files: [] }
             : s
         );
+        if (!dirFilter) {
+          const counts = {};
+          state.serverSamples.forEach(s => {
+            const cat = s.category || 'Data';
+            counts[cat] = (counts[cat] || 0) + 1;
+          });
+          state._serverFolderCounts = counts;
+        }
+        if (data.outside_data_root) {
+          alert('Thư mục ngoài kho Data/ không thể truy cập trực tiếp qua Server vì lý do bảo mật.\nVui lòng dùng nút "Chọn Thư Mục Trên Máy" để nạp toàn bộ file từ thư mục bất kỳ trên máy tính!');
+        }
         populateFolderSourceSelect();
         renderLeftSidebar();
       } catch (_) {}
@@ -5018,7 +5317,7 @@
 
     async function promptServerFolderPath() {
       const inputPath = prompt(
-        'Nhập tên thư mục trong kho Data (ví dụ: bo_luat) hoặc đường dẫn tuyệt đối tới thư mục chứa văn bản trên máy:',
+        'Nhập tên thư mục trong kho Data (ví dụ: bo_luat). Nếu thư mục nằm ngoài Data/, hãy dùng nút "Chọn Thư Mục Trên Máy":',
         state.customServerDir || 'bo_luat'
       );
       if (!inputPath || !inputPath.trim()) return;
@@ -5030,7 +5329,7 @@
 
     /**
      * Handle picking a local folder via <input type="file" webkitdirectory directory multiple>
-     * Pairs .docx/.txt files with companion .json files (thuoc_tinh.json, luoc_do.json, muc_luc.json) in the same subfolder!
+     * Supports both single-doc subfolders (noi_dung.docx + companion jsons) and flat folders containing thousands of .docx/.txt files.
      */
     async function handleLocalFolderPick(event) {
       const files = Array.from(event.target.files || []);
@@ -5044,30 +5343,28 @@
         const parts = relPath.split('/');
         const fileNameLower = f.name.toLowerCase();
 
-        // Determine document group key (subfolder name or filename stem)
+        // Determine directory key containing the file
         let groupKey = '';
-        let categoryName = parts[0] || 'Thư mục máy';
+        const categoryName = parts.length >= 2 ? parts[parts.length - 2] : (parts[0] || 'Thư mục máy');
         if (parts.length >= 2) {
           groupKey = parts.slice(0, parts.length - 1).join('/');
         } else {
-          groupKey = f.name.replace(/\.[^.]+$/, '');
+          groupKey = '__root__';
         }
 
         if (!groups.has(groupKey)) {
           groups.set(groupKey, {
             groupKey,
-            folderName: parts.length >= 2 ? parts[parts.length - 2] : f.name.replace(/\.[^.]+$/, ''),
+            folderName: parts.length >= 2 ? parts[parts.length - 2] : '',
             category: categoryName,
-            docFile: null,
+            docFiles: [],
             jsonFiles: {}
           });
         }
         const grp = groups.get(groupKey);
 
         if ((fileNameLower.endsWith('.docx') || fileNameLower.endsWith('.txt')) && !f.name.startsWith('~$')) {
-          if (!grp.docFile || fileNameLower === 'noi_dung.docx') {
-            grp.docFile = f;
-          }
+          grp.docFiles.push(f);
         } else if (fileNameLower.endsWith('.json')) {
           grp.jsonFiles[fileNameLower] = f;
           standaloneJsons.push(f);
@@ -5076,23 +5373,56 @@
 
       const localItems = [];
       for (const [, grp] of groups.entries()) {
-        if (grp.docFile) {
+        if (grp.docFiles.length === 1) {
+          const docFile = grp.docFiles[0];
           const jsonFileNames = Object.keys(grp.jsonFiles);
+          const isNoiDung = docFile.name.toLowerCase() === 'noi_dung.docx';
+          const displayName = (isNoiDung && grp.folderName) ? `${grp.folderName}.docx` : docFile.name;
           localItems.push({
-            localIndex: localItems.length,
-            id: grp.groupKey,
-            name: grp.docFile.name.toLowerCase() === 'noi_dung.docx' ? `${grp.folderName}.docx` : grp.docFile.name,
+            localIndex: 0,
+            id: grp.groupKey === '__root__' ? docFile.name : `${grp.groupKey}/${docFile.name}`,
+            name: displayName,
             category: grp.category,
             has_json: jsonFileNames.length > 0,
             json_files: jsonFileNames,
             isLocal: true,
-            docFile: grp.docFile,
+            docFile,
             jsonFileMap: grp.jsonFiles
           });
+        } else if (grp.docFiles.length > 1) {
+          // Folder contains multiple documents directly: list EVERY document without overwriting
+          const jsonEntries = Object.entries(grp.jsonFiles);
+          for (const docFile of grp.docFiles) {
+            const stemLower = docFile.name.replace(/\.[^.]+$/, '').toLowerCase();
+            const matchedMap = {};
+            for (const [jNameLower, jFile] of jsonEntries) {
+              const jStem = jNameLower.replace(/\.json$/i, '');
+              if (jStem === stemLower || jNameLower.startsWith(stemLower + '_')) {
+                matchedMap[jNameLower] = jFile;
+              }
+            }
+            const matchedNames = Object.keys(matchedMap);
+            localItems.push({
+              localIndex: 0,
+              id: grp.groupKey === '__root__' ? docFile.name : `${grp.groupKey}/${docFile.name}`,
+              name: docFile.name,
+              category: grp.category,
+              has_json: matchedNames.length > 0,
+              json_files: matchedNames,
+              isLocal: true,
+              docFile,
+              jsonFileMap: matchedMap
+            });
+          }
         }
       }
 
-      // If the user selected a folder that only has .json files (no .docx), load those JSONs into the current document!
+      localItems.sort((a, b) => a.id.localeCompare(b.id, 'vi', { numeric: true, sensitivity: 'base' }));
+      localItems.forEach((item, idx) => {
+        item.localIndex = idx;
+      });
+
+      // If the user selected a folder that only has .json files (no .docx/.txt), load those JSONs into the current document!
       if (localItems.length === 0 && standaloneJsons.length > 0) {
         await processUploadedJsonFileList(standaloneJsons);
         event.target.value = '';
@@ -5187,7 +5517,17 @@
         const res = await fetch(`/api/load-sample?folder=${encodeURIComponent(folderName)}`);
         if (!res.ok) throw new Error('Không tải được file mẫu từ thư mục');
         const data = await res.json();
-        const companionJson = data.companion_json || null;
+        let companionJson = null;
+        if (data.companion_json && typeof data.companion_json === 'object') {
+          companionJson = { thuoc_tinh: null, luoc_do: null, muc_luc: null, ket_qua: null };
+          for (const [k, val] of Object.entries(data.companion_json)) {
+            if (['thuoc_tinh', 'luoc_do', 'muc_luc', 'ket_qua'].includes(k)) {
+              companionJson[k] = val;
+            } else {
+              classifyAndAssignJsonData(companionJson, k, val);
+            }
+          }
+        }
         addOrCheckDuplicateDocument(data.file_name, data.text.replace(/\r\n/g, '\n'), data.blocks, companionJson);
         if (companionJson && (companionJson.thuoc_tinh || companionJson.luoc_do || companionJson.muc_luc)) {
           document.getElementById('statusText').innerHTML = `Đã tải <b>${escapeHtml(data.file_name)}</b> kèm file JSON (<code>thuoc_tinh.json</code>, <code>luoc_do.json</code>, <code>muc_luc.json</code>) — bấm <b>"Gán Nhãn Từ JSON"</b> để áp dụng ngay!`;
